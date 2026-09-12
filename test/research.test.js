@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createResearchHandler, parseGroundedPrices, normalizeInput, hashClientIP, cacheKey, ADMIT_SCRIPT } from '../lib/price-research.js';
+import { createResearchHandler, parseGroundedPrices, normalizeInput, hashClientIP, cacheKey, ADMIT_SCRIPT, classifyProviderError } from '../lib/price-research.js';
 
 const env = { GEMINI_API_KEY: 'test-key', UPSTASH_REDIS_REST_URL: 'https://redis.example', UPSTASH_REDIS_REST_TOKEN: 'test-token', IP_HASH_SECRET: 's'.repeat(32), VERCEL: '1' };
 const body = { productName: '테스트 운동화', brand: '브랜드', modelCode: 'MODEL-1', mode: 'store' };
@@ -64,6 +64,18 @@ for (const options of [{sources:false},{supported:false},{price:-1},{price:0}]) 
 test('provider errors are sanitized and never retried or cached',async()=>{
   const h=harness({providerStatus:429,provider:{error:{message:'secret'}}}); const res=await run(h);
   assert.equal(res.statusCode,502); assert.equal(h.calls.length,2); assert.ok(!JSON.stringify(res.data).includes('secret'));
+});
+test('provider diagnostics log classification only, never messages, keys, metadata or IPs',async()=>{
+  const h=harness({providerStatus:400,provider:{error:{code:400,status:'INVALID_ARGUMENT',message:'Invalid value at generation_config.response_format.text.mime_type (enum). SECRET 203.0.113.42',details:[{reason:'INVALID_ARGUMENT',metadata:{apiKey:'SECRET'},fieldViolations:[{field:'SECRET',description:'SECRET'}]},{reason:'secret with spaces'}]}}});
+  const res=await run(h); const log=JSON.parse(h.logs.find(line=>line.includes('provider_error')));
+  assert.equal(res.statusCode,502); assert.equal(h.calls.length,2);
+  assert.deepEqual(log.error,{code:400,status:'INVALID_ARGUMENT',details:[{reason:'INVALID_ARGUMENT'}],classification:'INVALID_MIME_TYPE'});
+  assert.ok(!JSON.stringify(h.logs).includes('SECRET')); assert.ok(!JSON.stringify(h.logs).includes('203.0.113.42'));
+  assert.ok(!JSON.stringify(res.data).includes('INVALID_ARGUMENT'));
+});
+test('malformed provider error fields cannot inject arbitrary log content',()=>{
+  assert.deepEqual(classifyProviderError({error:{code:'400 secret',status:{key:'secret'},details:{reason:'secret'},message:42}}),{code:undefined,status:undefined,details:[],classification:'UNCLASSIFIED'});
+  assert.equal(classifyProviderError(null).classification,'UNCLASSIFIED');
 });
 test('missing secret fails closed before network access',async()=>{
   const h=harness({overrides:{IP_HASH_SECRET:''}}); const res=await run(h); assert.equal(res.statusCode,503); assert.equal(h.calls.length,0);
