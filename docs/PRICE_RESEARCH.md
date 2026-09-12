@@ -19,7 +19,7 @@
 
 ## 환경변수
 
-Vercel Preview의 서버 전용 `GEMINI_API_KEY`, `UPSTASH_REDIS_REST_URL` (HTTPS), `UPSTASH_REDIS_REST_TOKEN` (쓰기 권한), `IP_HASH_SECRET` (32자 이상)이 필요합니다. 클라이언트나 저장소에 값을 넣지 않습니다.
+Vercel Preview의 서버 전용 `GEMINI_API_KEY`, `UPSTASH_REDIS_REST_URL` (HTTPS), `UPSTASH_REDIS_REST_TOKEN` (쓰기 권한), `IP_HASH_SECRET`이 필요합니다. 등록된 비밀값을 그대로 사용하며, 새로 설정할 때는 충분히 긴 무작위 값을 권장합니다. 클라이언트나 저장소에 값을 넣지 않습니다.
 가격 조사 모델은 코드에 고정하여 기존 이미지 식별의 `GEMINI_MODEL` 설정과 분리합니다.
 
 ## 검증 및 배포

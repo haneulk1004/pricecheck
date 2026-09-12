@@ -68,6 +68,9 @@ test('provider errors are sanitized and never retried or cached',async()=>{
 test('missing secret fails closed before network access',async()=>{
   const h=harness({overrides:{IP_HASH_SECRET:''}}); const res=await run(h); assert.equal(res.statusCode,503); assert.equal(h.calls.length,0);
 });
+test('existing nonempty HMAC secret is accepted without an unrelated length policy',async()=>{
+  const h=harness({overrides:{IP_HASH_SECRET:'existing-secret'}}); const res=await run(h); assert.equal(res.statusCode,200);
+});
 test('input and method validation prevents paid work',async()=>{
   for (const changes of [{method:'GET'},{body:{...body,productName:''}},{body:{...body,mode:'other'}},{body:'{broken'},{body:{...body,productName:'a'.repeat(161)}}]) {
     const h=harness(); const res=await run(h,changes); assert.ok([400,405].includes(res.statusCode)); assert.equal(h.calls.length,0);

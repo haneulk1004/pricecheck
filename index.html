@@ -280,7 +280,7 @@ function PriceResearch({product,mode,size,storePrice}){
         body:JSON.stringify({brand:product.brand,productName:product.productName,modelCode:product.modelCode,mode,size:String(size)})
       });
       const data = await response.json();
-      if(!response.ok) throw new Error(data.error || '가격 조사를 완료하지 못했습니다.');
+      if(!response.ok) throw new Error(typeof data.error==='string'?data.error:response.status===401||response.status===403?'Preview 접속 인증이 만료됐습니다. 페이지를 새로 열어주세요.':'가격 조사를 완료하지 못했습니다.');
       setResult(data);
     } catch(err){
       setError(err.name==='AbortError'?'조사 시간이 초과됐습니다. 잠시 후 다시 시도해주세요.':err.message);
