@@ -3,7 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "fengari": "^0.1.5"
   }
 }
