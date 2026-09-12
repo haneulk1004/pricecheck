@@ -35,3 +35,12 @@ Node 20 이상에서 `pnpm install --frozen-lockfile`, `pnpm test`.
 - [Structured output REST 스키마](https://ai.google.dev/gemini-api/docs/generate-content/structured-output)
 - [Upstash REST API](https://upstash.com/docs/redis/features/restapi)
 - [Vercel IP 헤더](https://vercel.com/docs/headers/request-headers)
+
+## 2026-09-13 Gemini 400 수정
+
+Preview에서 `error.code=400`, `error.status=INVALID_ARGUMENT`, `classification=INVALID_MIME_TYPE`을 확인했습니다.
+일부 사용 가이드 예제는 `responseFormat.text.mimeType`에 `application/json`을 쓰지만, [GenerateContent REST 참조의 TextResponseFormat](https://ai.google.dev/api/generate-content#TextResponseFormat)은 `APPLICATION_JSON` 열거값을 명시합니다. 실제 요청을 이 열거값으로 수정했습니다. HTTP `Content-Type`은 여전히 `application/json`입니다.
+
+요청 조합은 `/v1beta/models/gemini-3.8-flash:generateContent`, `tools: [{google_search: {}}]`, `generationConfig.responseFormat.text: {mimeType: "APPLICATION_JSON", schema: ...}`입니다. `responseMimeType`/`responseSchema` 등 다른 출력 설정을 중복 지정하지 않습니다.
+
+오류 로그는 HTTP 상태와 `error.code`, 대문자 식별자로 검증한 `error.status`, 최대 10개 `details[].reason`, 고정된 분류명만 기록합니다. `message`, `metadata`, `fieldViolations` 원문, 키, 요청/응답 본문은 기록하거나 클라이언트로 반환하지 않습니다. JSON이 아닌 오류도 고정 분류만 남깁니다.

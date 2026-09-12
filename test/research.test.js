@@ -38,7 +38,9 @@ test('new research checks Redis before exactly one grounded call, then caches 24
   assert.equal(h.calls.length,3); assert.equal(h.calls[0].request[0],'EVAL');
   assert.match(h.calls[1].url,/gemini-3\.8-flash:generateContent$/);
   assert.deepEqual(h.calls[1].request.tools,[{google_search:{}}]);
-  assert.equal(h.calls[1].request.generationConfig.responseFormat.text.mimeType,'application/json');
+  assert.equal(h.calls[1].request.generationConfig.responseFormat.text.mimeType,'APPLICATION_JSON');
+  assert.equal(h.calls[1].request.generationConfig.responseFormat.text.schema.type,'object');
+  assert.equal(h.calls[1].request.generationConfig.responseMimeType,undefined);
   assert.deepEqual(h.calls[2].request.slice(-2),['EX','86400']);
   assert.ok(!JSON.stringify(h.calls).includes('203.0.113.42')); assert.ok(!JSON.stringify(h.logs).includes('203.0.113.42'));
   assert.match(h.calls[0].request[4],/:ip:[a-f0-9]{64}$/);
