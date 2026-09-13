@@ -84,53 +84,82 @@ function App(){
     setView('confirm');
   };
 
-  const handleFile = (e)=>{
+  const handleFile = async(e)=>{
     const file = e.target.files?.[0];
+    e.target.value='';
     if(!file) return;
-    if(!file.type.startsWith('image/')){
-      setErrorMsg('이미지 파일만 업로드할 수 있습니다.');
+    if(!['image/jpeg','image/png','image/webp'].includes(file.type)){
+      setErrorMsg('JPG, PNG 또는 WebP 사진을 사용해주세요. 다른 형식은 JPG로 변환해주세요.');
       return;
     }
     if(file.size > 8 * 1024 * 1024){
-      setErrorMsg('이미지는 8MB 이하로 업로드해주세요.');
+      setErrorMsg('원본 사진은 8MB 이하로 선택해주세요.');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = ()=>{
-      const dataUrl = reader.result;
+    setIsLoading(true); setErrorMsg('');
+    let objectUrl;
+    try {
+      objectUrl=URL.createObjectURL(file);
+      const image=new Image();
+      await new Promise((resolve,reject)=>{
+        const timer=setTimeout(()=>reject(new Error('사진을 여는 데 시간이 오래 걸립니다. 다른 사진을 선택해주세요.')),10000);
+        image.onload=()=>{clearTimeout(timer);resolve();};
+        image.onerror=()=>{clearTimeout(timer);reject(new Error('사진 파일을 열 수 없습니다. 다른 사진을 선택해주세요.'));};
+        image.src=objectUrl;
+      });
+      const canvas=document.createElement('canvas');
+      let scale=Math.min(1,2000/Math.max(image.naturalWidth,image.naturalHeight));
+      let dataUrl='';
+      for(let attempt=0;attempt<5;attempt++){
+        canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));
+        canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
+        const context=canvas.getContext('2d');
+        if(!context) throw new Error('이 브라우저에서 사진을 처리할 수 없습니다.');
+        context.fillStyle='#fff';context.fillRect(0,0,canvas.width,canvas.height);
+        context.drawImage(image,0,0,canvas.width,canvas.height);
+        dataUrl=canvas.toDataURL('image/jpeg',0.85);
+        if(dataUrl.startsWith('data:image/jpeg;base64,') && dataUrl.split(',')[1].length<=4000000) break;
+        dataUrl='';scale*=0.75;
+      }
+      if(!dataUrl) throw new Error('사진을 충분히 줄이지 못했습니다. 제품 부분을 잘라 다시 선택해주세요.');
       setPreviewImg(dataUrl);
-      analyzeImage(dataUrl,file.type);
-    };
-    reader.readAsDataURL(file);
-    e.target.value='';
+      await analyzeImage(dataUrl,'image/jpeg');
+    } catch(err){
+      setErrorMsg(err.message || '사진을 처리하지 못했습니다. 다른 사진을 선택해주세요.');
+      setIsLoading(false);
+    } finally {
+      if(objectUrl) URL.revokeObjectURL(objectUrl);
+    }
   };
 
   const analyzeImage = async(dataUrl,mimeType)=>{
-    setIsLoading(true);
-    setErrorMsg('');
+    setIsLoading(true); setErrorMsg('');
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),55000);
     try {
-      const base64 = String(dataUrl).split(',')[1];
-      const res = await fetch('/api/analyze',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ imageBase64:base64, mimeType })
+      const base64=String(dataUrl).split(',')[1];
+      const body=JSON.stringify({imageBase64:base64,mimeType});
+      if(new Blob([body]).size>4100000) throw new Error('사진 용량이 너무 큽니다. 더 작은 사진을 선택해주세요.');
+      const res=await fetch('/api/analyze',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        signal:controller.signal,body
       });
-      const data = await res.json();
-      if(!res.ok) throw new Error(data?.error || 'AI 분석에 실패했습니다.');
+      let data;
+      try {data=await res.json();}
+      catch {throw new Error(res.status===413?'사진 용량이 너무 큽니다. 더 작은 사진을 선택해주세요.':'분석 응답을 읽지 못했습니다. 잠시 후 다시 시도해주세요.');}
+      if(!res.ok) throw new Error(data?.error || '사진을 분석하지 못했습니다.');
       setProduct({
-        brand:data.brand || '',
-        productName:data.productName || '',
-        modelCode:data.modelCode || '',
-        category:data.category || '',
+        brand:data.brand || '', productName:data.productName || '',
+        modelCode:data.modelCode || '', category:data.category || '',
         confidence:Number(data.confidence || 0),
         searchQuery:data.searchQuery || [data.brand,data.productName,data.modelCode].filter(Boolean).join(' ')
       });
       setView('confirm');
     } catch(err){
-      setErrorMsg(err.message || 'AI 분석에 실패했습니다.');
+      setErrorMsg(err.name==='AbortError'?'사진 분석 시간이 초과됐습니다. 잠시 후 다시 시도해주세요.':err.message || '사진을 분석하지 못했습니다.');
       setView('home');
     } finally {
-      setIsLoading(false);
+      clearTimeout(timer);setIsLoading(false);
     }
   };
 
