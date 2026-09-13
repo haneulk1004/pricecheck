@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createResearchHandler, parseGroundedPrices, normalizeInput, hashClientIP, cacheKey, ADMIT_SCRIPT, classifyProviderError } from '../lib/price-research.js';
+import { createResearchHandler, parseGroundedPrices, normalizeInput, hashClientIP, cacheKey, ADMIT_SCRIPT, classifyProviderError, dailyLimits } from '../lib/price-research.js';
 
 const env = { GEMINI_API_KEY: 'test-key', UPSTASH_REDIS_REST_URL: 'https://redis.example', UPSTASH_REDIS_REST_TOKEN: 'test-token', IP_HASH_SECRET: 's'.repeat(32), VERCEL: '1' };
 const body = { productName: '테스트 운동화', brand: '브랜드', modelCode: 'MODEL-1', mode: 'store' };
@@ -36,6 +36,7 @@ test('new research checks Redis before exactly one grounded call, then caches 24
   assert.equal(res.statusCode,200); assert.equal(res.data.remaining,4); assert.equal(res.data.cached,false);
   assert.equal(res.headers['Cache-Control'],'no-store');
   assert.equal(h.calls.length,3); assert.equal(h.calls[0].request[0],'EVAL');
+  assert.deepEqual(h.calls[0].request.slice(-2),['5','300']);
   assert.match(h.calls[1].url,/gemini-3\.8-flash:generateContent$/);
   assert.deepEqual(h.calls[1].request.tools,[{google_search:{}}]);
   assert.equal(h.calls[1].request.generationConfig.responseFormat.text.mimeType,'APPLICATION_JSON');
@@ -44,6 +45,25 @@ test('new research checks Redis before exactly one grounded call, then caches 24
   assert.deepEqual(h.calls[2].request.slice(-2),['EX','86400']);
   assert.ok(!JSON.stringify(h.calls).includes('203.0.113.42')); assert.ok(!JSON.stringify(h.logs).includes('203.0.113.42'));
   assert.match(h.calls[0].request[4],/:ip:[a-f0-9]{64}$/);
+});
+
+test('Preview/Production limits can be configured without code changes', async()=>{
+  const h = harness({overrides:{PER_IP_DAILY_LIMIT:'10',GLOBAL_DAILY_LIMIT:'400'}}); const res = await run(h);
+  assert.equal(res.statusCode,200);
+  assert.deepEqual(h.calls[0].request.slice(-2),['10','400']);
+  assert.deepEqual(dailyLimits({...env,PER_IP_DAILY_LIMIT:'10',GLOBAL_DAILY_LIMIT:'400'}),{ipLimit:10,globalLimit:400});
+});
+
+test('invalid configured limits fail closed before network access', async()=>{
+  for (const overrides of [{PER_IP_DAILY_LIMIT:'0'},{PER_IP_DAILY_LIMIT:'abc'},{PER_IP_DAILY_LIMIT:'101'},{GLOBAL_DAILY_LIMIT:'10001'}]) {
+    const h = harness({overrides}); const res = await run(h);
+    assert.equal(res.statusCode,503); assert.equal(res.data.code,'CONFIG_UNAVAILABLE'); assert.equal(h.calls.length,0);
+  }
+});
+
+test('configured IP limit is reflected in the limit message', async()=>{
+  const h = harness({admission:['IP_LIMIT',3600],overrides:{PER_IP_DAILY_LIMIT:'10'}}); const res = await run(h);
+  assert.equal(res.statusCode,429); assert.match(res.data.error,/10회/); assert.equal(h.calls.length,1);
 });
 
 test('cached prices are returned even if limits have been exhausted, with no further calls', async()=>{
@@ -114,6 +134,6 @@ test('missing finish or partial JSON is rejected',()=>{
   const data=grounded(); data.candidates[0].finishReason='MAX_TOKENS'; assert.throws(()=>parseGroundedPrices(data),{code:'INVALID_RESPONSE'});
 });
 test('Lua admission order is cache, IP, global, then counters',()=>{
-  const positions=["redis.call('GET', KEYS[1])",'if ip >= 5','if total >= 300',"redis.call('INCR', ipkey)","redis.call('INCR', globalkey)"].map(s=>ADMIT_SCRIPT.indexOf(s));
+  const positions=["redis.call('GET', KEYS[1])",'if ip >= ipLimit','if total >= globalLimit',"redis.call('INCR', ipkey)","redis.call('INCR', globalkey)"].map(s=>ADMIT_SCRIPT.indexOf(s));
   assert.deepEqual([...positions].sort((a,b)=>a-b),positions); assert.ok(positions.every(n=>n>=0));
 });
