@@ -11,14 +11,16 @@ const legacy = {
   }
 };
 
-test('resell request uses one low-thinking Google Search pass without structured-output preview', () => {
+test('resell request uses one low-thinking Google Search pass with structured JSON output', () => {
   const request = buildResellInteractionRequest(legacy, input, 'gemini-3.8-flash');
   assert.equal(request.model, 'gemini-3.8-flash');
   assert.deepEqual(request.tools, [{ type: 'google_search', search_types: ['web_search'] }]);
   assert.equal(request.generation_config.max_output_tokens, 4096);
   assert.equal(request.generation_config.thinking_level, 'low');
   assert.equal(request.generation_config.tool_choice, undefined);
-  assert.equal(request.response_format, undefined);
+  assert.equal(request.response_format.type, 'text');
+  assert.equal(request.response_format.mime_type, 'application/json');
+  assert.deepEqual(request.response_format.schema, legacy.generationConfig.responseFormat.text.schema);
   assert.match(request.system_instruction, /seller-domain citation alignment/);
   assert.match(request.input, /CW2288-111/);
   assert.match(request.input, /260/);
@@ -87,7 +89,8 @@ test('prompt-aware fetch performs exactly one paid interaction even when citatio
   });
   const converted = await response.json();
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].response_format, undefined);
+  assert.equal(calls[0].response_format.mime_type, 'application/json');
+  assert.deepEqual(calls[0].response_format.schema, legacy.generationConfig.responseFormat.text.schema);
   assert.equal(calls[0].generation_config.thinking_level, 'low');
   assert.throws(
     () => parseGroundedPrices(converted),
