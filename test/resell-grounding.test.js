@@ -11,16 +11,19 @@ const legacy = {
   }
 };
 
-test('resell request uses Interactions Google Search with supported request shape', () => {
+test('resell request uses one low-thinking Google Search pass without structured-output preview', () => {
   const request = buildResellInteractionRequest(legacy, input, 'gemini-3.8-flash');
   assert.equal(request.model, 'gemini-3.8-flash');
   assert.deepEqual(request.tools, [{ type: 'google_search', search_types: ['web_search'] }]);
   assert.equal(request.generation_config.max_output_tokens, 4096);
+  assert.equal(request.generation_config.thinking_level, 'low');
   assert.equal(request.generation_config.tool_choice, undefined);
-  assert.match(request.system_instruction, /Google Search/);
+  assert.equal(request.response_format, undefined);
+  assert.match(request.system_instruction, /seller-domain citation alignment/);
   assert.match(request.input, /CW2288-111/);
   assert.match(request.input, /260/);
-  assert.equal(request.response_format.mime_type, 'application/json');
+  assert.match(request.input, /raw JSON/);
+  assert.match(request.input, /own domain/);
   assert.equal(request.store, false);
 });
 
@@ -61,32 +64,20 @@ test('Korean output accepts UTF-8 byte citation offsets', () => {
   assert.equal(result.offers[0].sources[0].url, 'https://example.com/korean-item');
 });
 
-test('citation recovery retries only when a grounded offer omitted annotations', async () => {
+test('prompt-aware fetch performs exactly one paid interaction even when citations are absent', async () => {
   const text = JSON.stringify({ offers: [{ seller: 'KREAM', productName: 'Air Force 1', priceKRW: 120000, condition: '거래가', note: '260mm' }] });
-  const token = '120000';
-  const start = Buffer.byteLength(text.slice(0, text.indexOf(token)), 'utf8');
-  const responses = [
-    {
-      status: 'completed',
-      steps: [
-        { type: 'google_search_call', arguments: { queries: ['CW2288-111 260'] } },
-        { type: 'google_search_result', result: [{ search_suggestions: '<div>search</div>' }] },
-        { type: 'model_output', content: [{ type: 'text', text }] }
-      ]
-    },
-    {
-      status: 'completed',
-      steps: [
-        { type: 'google_search_call', arguments: { queries: ['CW2288-111 260 KREAM'] } },
-        { type: 'model_output', content: [{ type: 'text', text, annotations: [{ type: 'url_citation', url: 'https://kream.co.kr/products/12831', title: 'kream.co.kr', start_index: start, end_index: start + token.length }] }] }
-      ]
-    }
-  ];
+  const interaction = {
+    status: 'completed',
+    steps: [
+      { type: 'google_search_call', arguments: { queries: ['CW2288-111 260'] } },
+      { type: 'google_search_result', result: [{ search_suggestions: '<div>search</div>' }] },
+      { type: 'model_output', content: [{ type: 'text', text }] }
+    ]
+  };
   const calls = [];
   const mockFetch = async (_url, options) => {
     calls.push(JSON.parse(options.body));
-    const data = responses.shift();
-    return { ok: true, status: 200, statusText: 'OK', headers: new Headers(), json: async () => data };
+    return { ok: true, status: 200, statusText: 'OK', headers: new Headers(), json: async () => interaction };
   };
   const wrapped = createPromptAwareFetch(mockFetch);
   const response = await wrapped('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', {
@@ -95,10 +86,8 @@ test('citation recovery retries only when a grounded offer omitted annotations',
     body: JSON.stringify({ contents: [{ parts: [{ text: JSON.stringify(input) }] }], generationConfig: legacy.generationConfig })
   });
   const converted = await response.json();
-  const result = parseGroundedPrices(converted);
-  assert.equal(calls.length, 2);
-  assert.ok(calls[0].response_format);
-  assert.equal(calls[1].response_format, undefined);
-  assert.equal(result.offers.length, 1);
-  assert.equal(result.offers[0].sources[0].url, 'https://kream.co.kr/products/12831');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].response_format, undefined);
+  assert.equal(calls[0].generation_config.thinking_level, 'low');
+  assert.equal(parseGroundedPrices(converted).offers.length, 0);
 });
