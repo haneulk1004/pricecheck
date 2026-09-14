@@ -5,7 +5,7 @@ import { dedupeResearchPayload } from '../lib/source-dedupe.js';
 
 const researchHandler = createResearchHandler({ fetchImpl: createPromptAwareFetch() });
 const QUOTA_PREFIX = 'pricecheck:{grounding}:v1';
-const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v1';
+const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v2';
 const REFUNDABLE_CODES = new Set(['PROVIDER_ERROR','INVALID_RESPONSE','NO_SOURCES','NO_VERIFIED_PRICES','RESEARCH_FAILED']);
 
 const REFUND_SCRIPT = `
@@ -30,7 +30,7 @@ return 1
 
 const SELLER_DOMAINS = [
   [/전자랜드/u, ['etlandmall.co.kr','etland.co.kr']],
-  [/롯데/u, ['lotteon.com','lotte.com','ellotte.com']],
+  [/롯데/u, ['lotteon.com','lotte.com','ellotte.com','lotteimall.com']],
   [/쿠팡/u, ['coupang.com']],
   [/11번가|11st/iu, ['11st.co.kr']],
   [/다나와/u, ['danawa.com']],
@@ -42,7 +42,10 @@ const SELLER_DOMAINS = [
   [/네이버|naver/iu, ['naver.com']],
   [/kream/iu, ['kream.co.kr']],
   [/soldout/iu, ['soldout.co.kr']],
-  [/logitech|로지텍/iu, ['logitech.com']]
+  [/logitech|로지텍/iu, ['logitech.com']],
+  [/컴퓨존|compuzone/iu, ['compuzone.co.kr']],
+  [/올리브영|oliveyoung/iu, ['oliveyoung.co.kr']],
+  [/하이마트|himart/iu, ['e-himart.co.kr']]
 ];
 
 function sourceHost(source) {
@@ -50,14 +53,37 @@ function sourceHost(source) {
   catch { return ''; }
 }
 
-function sourceMatchesSeller(source, seller) {
-  const rule = SELLER_DOMAINS.find(([pattern]) => pattern.test(String(seller || '')));
-  if (!rule) return true;
-  const host = sourceHost(source);
-  return rule[1].some(domain => host === domain || host.endsWith(`.${domain}`));
+function normalizeSellerToken(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/주식회사|㈜|공식|스토어|몰|마켓|온라인|쇼핑|백화점|store|shop|shopping|mall|market/giu, '')
+    .replace(/[^a-z0-9가-힣]/giu, '');
 }
 
-function alignOfferSources(payload) {
+function registrableLabel(host) {
+  const parts = String(host || '').split('.').filter(Boolean);
+  if (parts.length < 2) return parts[0] || '';
+  const secondLevel = new Set(['co','or','go','ne','re','pe']);
+  const tld = parts[parts.length - 1];
+  const second = parts[parts.length - 2];
+  if (tld === 'kr' && secondLevel.has(second) && parts.length >= 3) return parts[parts.length - 3];
+  return second;
+}
+
+function sourceMatchesSeller(source, seller) {
+  const sellerText = String(seller || '');
+  const rule = SELLER_DOMAINS.find(([pattern]) => pattern.test(sellerText));
+  const host = sourceHost(source);
+  if (!host) return false;
+  if (rule) return rule[1].some(domain => host === domain || host.endsWith(`.${domain}`));
+
+  const sellerToken = normalizeSellerToken(sellerText);
+  const hostToken = normalizeSellerToken(registrableLabel(host));
+  if (!sellerToken || !hostToken || sellerToken.length < 3 || hostToken.length < 3) return false;
+  return sellerToken === hostToken || sellerToken.includes(hostToken) || hostToken.includes(sellerToken);
+}
+
+export function alignOfferSources(payload) {
   if (!payload || !Array.isArray(payload.offers)) return payload;
   const offers = payload.offers.flatMap(offer => {
     if (!offer || !Array.isArray(offer.sources)) return [];
@@ -116,10 +142,10 @@ export default async function handler(req, res) {
     const aligned = alignOfferSources(deduped);
     if (Array.isArray(deduped?.offers) && deduped.offers.length > 0 && aligned.offers.length === 0) {
       res.status(422);
-      return originalJson({
+      return refundFailedAdmission(req, 'NO_VERIFIED_PRICES').then(() => originalJson({
         code: 'NO_VERIFIED_PRICES',
         error: '판매처와 직접 연결되는 출처를 확인하지 못해 가격 결과를 표시하지 않습니다. 아래 판매처에서 직접 확인해주세요.'
-      });
+      }));
     }
 
     return originalJson(aligned);
