@@ -75,13 +75,35 @@ function App(){
     searchQuery:name.trim()
   });
 
-  const handleManualSearch = (e)=>{
+  const handleManualSearch = async(e)=>{
     e.preventDefault();
     const q = manualSearch.trim();
     if(!q) return;
-    setProduct(buildManualProduct(q));
-    setErrorMsg('');
-    setView('confirm');
+    setIsLoading(true); setErrorMsg('');
+    const controller = new AbortController();
+    const timer = setTimeout(()=>controller.abort(),35000);
+    try {
+      const res = await fetch('/api/identify',{
+        method:'POST',headers:{'Content-Type':'application/json'},signal:controller.signal,
+        body:JSON.stringify({query:q})
+      });
+      let data;
+      try { data = await res.json(); } catch { data = null; }
+      if(!res.ok || !data?.productName) throw new Error(data?.error || '제품 정보를 자동 확인하지 못했습니다.');
+      setProduct({
+        brand:data.brand || '',
+        productName:data.productName || q,
+        modelCode:data.modelCode || '',
+        category:data.category || '',
+        confidence:Number(data.confidence || 0),
+        searchQuery:data.searchQuery || q
+      });
+    } catch(err){
+      setProduct(buildManualProduct(q));
+      setErrorMsg(err.name==='AbortError'?'제품 확인 시간이 초과되어 입력한 검색어로 계속 진행합니다.':'자동 식별이 어려워 입력한 검색어로 계속 진행합니다. 필요한 항목은 직접 수정해주세요.');
+    } finally {
+      clearTimeout(timer); setIsLoading(false); setView('confirm');
+    }
   };
 
   const handleFile = async(e)=>{
