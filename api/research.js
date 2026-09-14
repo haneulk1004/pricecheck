@@ -5,7 +5,7 @@ import { dedupeResearchPayload } from '../lib/source-dedupe.js';
 
 const researchHandler = createResearchHandler({ fetchImpl: createPromptAwareFetch() });
 const QUOTA_PREFIX = 'pricecheck:{grounding}:v1';
-const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v2';
+const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v3';
 const REFUNDABLE_CODES = new Set(['PROVIDER_ERROR','INVALID_RESPONSE','NO_SOURCES','NO_VERIFIED_PRICES','RESEARCH_FAILED']);
 
 const REFUND_SCRIPT = `
