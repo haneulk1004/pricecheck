@@ -1,10 +1,11 @@
-import { createResearchHandler, hashClientIP, redisCommand } from '../lib/price-research.js';
+import { createResearchHandler, cacheKey, hashClientIP, normalizeInput, redisCommand } from '../lib/price-research.js';
 import { createPromptAwareFetch } from '../lib/resell-grounding.js';
 import { parseAndCanonicalizeResearchBody } from '../lib/research-request.js';
 import { dedupeResearchPayload } from '../lib/source-dedupe.js';
 
 const researchHandler = createResearchHandler({ fetchImpl: createPromptAwareFetch() });
 const QUOTA_PREFIX = 'pricecheck:{grounding}:v1';
+const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v1';
 const REFUNDABLE_CODES = new Set(['PROVIDER_ERROR','INVALID_RESPONSE','NO_SOURCES','NO_VERIFIED_PRICES','RESEARCH_FAILED']);
 
 const REFUND_SCRIPT = `
@@ -17,6 +18,14 @@ local total = tonumber(redis.call('GET', globalkey) or '0')
 if ip > 0 then redis.call('DECR', ipkey) end
 if total > 0 then redis.call('DECR', globalkey) end
 return {math.max(ip - 1, 0), math.max(total - 1, 0)}
+`;
+
+const MIGRATE_CACHE_SCRIPT = `
+local migrated = redis.call('GET', KEYS[2])
+if migrated then return 0 end
+redis.call('DEL', KEYS[1])
+redis.call('SET', KEYS[2], '1', 'EX', 172800)
+return 1
 `;
 
 const SELLER_DOMAINS = [
@@ -58,6 +67,23 @@ function alignOfferSources(payload) {
   return { ...payload, offers };
 }
 
+async function migrateLegacyCache(req) {
+  try {
+    const input = normalizeInput(req.body);
+    const key = cacheKey(input);
+    const marker = `${CACHE_MIGRATION_PREFIX}:${key.split(':').pop()}`;
+    const migrated = await redisCommand(
+      ['EVAL', MIGRATE_CACHE_SCRIPT, '2', key, marker],
+      process.env,
+      fetch,
+      console.info
+    );
+    if (Number(migrated) === 1) console.info(JSON.stringify({ event: 'price_research_cache_migration', outcome: 'invalidated' }));
+  } catch (error) {
+    console.info(JSON.stringify({ event: 'price_research_cache_migration', outcome: 'skipped' }));
+  }
+}
+
 async function refundFailedAdmission(req, code) {
   if (!REFUNDABLE_CODES.has(code)) return;
   try {
@@ -76,6 +102,8 @@ async function refundFailedAdmission(req, code) {
 
 export default async function handler(req, res) {
   req.body = parseAndCanonicalizeResearchBody(req.body);
+
+  if (req.method === 'POST') await migrateLegacyCache(req);
 
   const originalJson = res.json.bind(res);
   res.json = data => {
