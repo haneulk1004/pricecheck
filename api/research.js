@@ -37,7 +37,7 @@ const SELLER_DOMAINS = [
   [/무신사/u, ['musinsa.com']],
   [/오늘의집/u, ['ohou.se']],
   [/제네시스/u, ['genesis.com']],
-  [/ssg/iu, ['ssg.com']],
+  [/신세계|ssg/iu, ['ssg.com']],
   [/g마켓|gmarket/iu, ['gmarket.co.kr']],
   [/네이버|naver/iu, ['naver.com']],
   [/kream/iu, ['kream.co.kr']],
