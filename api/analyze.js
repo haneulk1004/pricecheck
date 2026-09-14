@@ -43,9 +43,11 @@ Return JSON ONLY with this exact shape:
 
 Rules:
 - confidence must be an integer from 0 to 100.
-- Never invent a model code if it is not reasonably visible or inferable.
-- Prefer exact model/style/SKU codes when visible on labels, packaging, tags, or the product.
-- searchQuery should prioritize brand + exact product name + model code when known.
+- modelCode is STRICTLY visual evidence only: return a model/SKU/style/product code only when the exact code is clearly readable on the submitted image itself (for example on a label, package, tag, engraving, or printed product marking).
+- NEVER infer, recall, guess, or derive modelCode from the recognized product identity, regional catalog knowledge, common web listings, or memory. If the code is not literally readable in the image, modelCode MUST be an empty string.
+- A family/internal/regional code that is merely associated with the recognized product must not be returned unless that exact code is visibly readable in the image.
+- You may still identify brand and productName from visual appearance when reasonably confident.
+- searchQuery should use brand + productName, and include modelCode only when modelCode passed the strict visible-evidence rule above.
 - Do not estimate or return prices.
 - If identification is uncertain, lower confidence instead of fabricating details.
 `;
