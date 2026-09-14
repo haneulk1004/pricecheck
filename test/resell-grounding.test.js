@@ -89,5 +89,8 @@ test('prompt-aware fetch performs exactly one paid interaction even when citatio
   assert.equal(calls.length, 1);
   assert.equal(calls[0].response_format, undefined);
   assert.equal(calls[0].generation_config.thinking_level, 'low');
-  assert.equal(parseGroundedPrices(converted).offers.length, 0);
+  assert.throws(
+    () => parseGroundedPrices(converted),
+    error => error?.code === 'NO_SOURCES' && error?.status === 422
+  );
 });
