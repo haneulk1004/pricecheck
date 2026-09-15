@@ -28,8 +28,10 @@ redis.call('SET', KEYS[2], '1', 'EX', 172800)
 return 1
 `;
 
+// Put specific brands before broader parent-company aliases.
 const SELLER_DOMAINS = [
   [/전자랜드/u, ['etlandmall.co.kr','etland.co.kr']],
+  [/하이마트|himart/iu, ['e-himart.co.kr']],
   [/롯데/u, ['lotteon.com','lotte.com','ellotte.com','lotteimall.com']],
   [/쿠팡/u, ['coupang.com']],
   [/11번가|11st/iu, ['11st.co.kr']],
@@ -45,12 +47,30 @@ const SELLER_DOMAINS = [
   [/logitech|로지텍/iu, ['logitech.com']],
   [/컴퓨존|compuzone/iu, ['compuzone.co.kr']],
   [/올리브영|oliveyoung/iu, ['oliveyoung.co.kr']],
-  [/하이마트|himart/iu, ['e-himart.co.kr']]
+  [/프리스비|frisbee/iu, ['frisbeekorea.com']]
 ];
 
-function sourceHost(source) {
-  try { return new URL(source?.url).hostname.toLowerCase().replace(/^www\./,''); }
+function urlHost(url) {
+  try { return new URL(url).hostname.toLowerCase().replace(/^www\./,''); }
   catch { return ''; }
+}
+
+function domainFromCitationTitle(title) {
+  const text = String(title || '').trim().toLowerCase();
+  const match = text.match(/(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?:[\/:\s]|$)/iu);
+  return match?.[1]?.replace(/^www\./, '') || '';
+}
+
+function sourceHost(source) {
+  const host = urlHost(source?.url);
+  // Google grounding may intentionally return a vertexaisearch redirect URI while
+  // exposing the actual publisher domain in the citation title. Validate against
+  // that publisher domain instead of treating Google's redirect host as the seller.
+  if (host === 'vertexaisearch.cloud.google.com') {
+    const publisherHost = domainFromCitationTitle(source?.title);
+    if (publisherHost) return publisherHost;
+  }
+  return host;
 }
 
 function normalizeSellerToken(value) {
