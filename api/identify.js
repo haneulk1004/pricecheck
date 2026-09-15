@@ -1,4 +1,5 @@
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const WIKIDATA_API = 'https://www.wikidata.org/w/api.php';
 
 function extractJson(text='') {
   const cleaned = String(text).replace(/```json/gi,'').replace(/```/g,'').trim();
@@ -15,15 +16,6 @@ function outputBlocks(data) {
   return (data?.steps || []).flatMap(step => step?.type === 'model_output' ? (step.content || []) : []).filter(item => item?.type === 'text');
 }
 
-function citationUrls(data) {
-  const seen = new Set();
-  return outputBlocks(data).flatMap(block => block.annotations || []).filter(annotation => annotation?.type === 'url_citation' && typeof annotation.url === 'string').map(annotation => annotation.url).filter(url => {
-    if (seen.has(url)) return false;
-    seen.add(url);
-    return true;
-  }).slice(0,3);
-}
-
 function safeHttpsUrl(value) {
   try {
     const url = new URL(value);
@@ -34,6 +26,10 @@ function safeHttpsUrl(value) {
   } catch {
     return null;
   }
+}
+
+function normalizedLabel(value='') {
+  return String(value).normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'');
 }
 
 function decodeHtml(value='') {
@@ -53,29 +49,63 @@ function metaImage(html='') {
   return '';
 }
 
-async function groundedProductImage(data, fetchImpl) {
-  for (const sourceUrl of citationUrls(data)) {
-    const source = safeHttpsUrl(sourceUrl);
-    if (!source) continue;
-    try {
-      const response = await fetchImpl(source.href, {
-        method:'GET',
-        redirect:'follow',
-        signal:AbortSignal.timeout(4000),
-        headers:{'User-Agent':'PRICE_CHECK/1.0 product-preview'}
-      });
-      if (!response?.ok || !String(response.headers?.get?.('content-type') || '').toLowerCase().includes('text/html') || typeof response.text !== 'function') continue;
-      const finalUrl = safeHttpsUrl(response.url || source.href);
-      if (!finalUrl) continue;
-      const html = (await response.text()).slice(0,1500000);
-      const candidate = metaImage(html);
-      if (!candidate) continue;
-      const image = safeHttpsUrl(new URL(candidate, finalUrl).href);
-      if (!image) continue;
-      return { imageUrl:image.href, imageSourceUrl:finalUrl.href };
-    } catch {}
+async function imageFromOfficialPage(pageUrl, fetchImpl) {
+  const page = safeHttpsUrl(pageUrl);
+  if (!page) return null;
+  try {
+    const response = await fetchImpl(page.href, {
+      method:'GET', redirect:'follow', signal:AbortSignal.timeout(4500),
+      headers:{'User-Agent':'PRICE_CHECK/1.0 product-preview'}
+    });
+    if (!response?.ok || !String(response.headers?.get?.('content-type') || '').toLowerCase().includes('text/html') || typeof response.text !== 'function') return null;
+    const finalUrl = safeHttpsUrl(response.url || page.href);
+    if (!finalUrl) return null;
+    const candidate = metaImage((await response.text()).slice(0,1500000));
+    if (!candidate) return null;
+    const image = safeHttpsUrl(new URL(candidate, finalUrl).href);
+    return image ? {imageUrl:image.href,imageSourceUrl:finalUrl.href,imageProvider:'official'} : null;
+  } catch {
+    return null;
   }
-  return { imageUrl:'', imageSourceUrl:'' };
+}
+
+async function wikidataProductImage(productName, fetchImpl) {
+  const name = clean(productName,160);
+  if (!name) return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+  try {
+    const searchUrl = new URL(WIKIDATA_API);
+    searchUrl.search = new URLSearchParams({action:'wbsearchentities',search:name,language:'en',uselang:'en',type:'item',limit:'5',format:'json',origin:'*'}).toString();
+    const searchResponse = await fetchImpl(searchUrl.href,{signal:AbortSignal.timeout(4000),headers:{'User-Agent':'PRICE_CHECK/1.0 product-preview'}});
+    if (!searchResponse?.ok) return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+    const searchData = await searchResponse.json();
+    const target = normalizedLabel(name);
+    const match = (searchData?.search || []).find(item => normalizedLabel(item?.label) === target);
+    if (!match?.id) return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+
+    const entityUrl = new URL(WIKIDATA_API);
+    entityUrl.search = new URLSearchParams({action:'wbgetentities',ids:match.id,props:'claims|labels',languages:'en',format:'json',origin:'*'}).toString();
+    const entityResponse = await fetchImpl(entityUrl.href,{signal:AbortSignal.timeout(4000),headers:{'User-Agent':'PRICE_CHECK/1.0 product-preview'}});
+    if (!entityResponse?.ok) return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+    const entity = (await entityResponse.json())?.entities?.[match.id];
+    if (!entity || normalizedLabel(entity?.labels?.en?.value) !== target) return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+
+    const official = entity?.claims?.P856?.map(claim => claim?.mainsnak?.datavalue?.value).find(Boolean);
+    if (official) {
+      const officialImage = await imageFromOfficialPage(official,fetchImpl);
+      if (officialImage) return officialImage;
+    }
+
+    const filename = entity?.claims?.P18?.map(claim => claim?.mainsnak?.datavalue?.value).find(Boolean);
+    if (typeof filename === 'string' && filename.trim()) {
+      const encoded = encodeURIComponent(filename.replace(/ /g,'_'));
+      return {
+        imageUrl:`https://commons.wikimedia.org/w/index.php?title=Special:Redirect/file/${encoded}&width=900`,
+        imageSourceUrl:`https://commons.wikimedia.org/wiki/File:${encoded}`,
+        imageProvider:'wikimedia'
+      };
+    }
+  } catch {}
+  return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
 }
 
 export function createIdentifyHandler({ env = process.env, fetchImpl = fetch, log = console.info } = {}) {
@@ -93,10 +123,9 @@ export function createIdentifyHandler({ env = process.env, fetchImpl = fetch, lo
     const prompt = `
 You are the product-identification engine for PRICE_CHECK, a Korean shopping price verification service.
 The user entered a manual product query. Normalize it into structured product data.
-Use Google Search to verify the exact commercial product and locate its official manufacturer product page.
-Prefer the official manufacturer product page as the citation source. Do not use community posts, blogs, or marketplace listings when an official product page exists.
-Use only information strongly implied by the query or supported by the search source. Do not invent a brand or model code.
-If the query is itself a model/style/SKU code and you can confidently identify the commercial product, return the verified brand/product/model. Otherwise preserve the query as productName and leave uncertain fields empty.
+Use only information strongly implied by the query. Do not invent a brand or model code.
+If the query is itself a model/style/SKU code and you can confidently identify the commercial product from your knowledge, return the likely brand/product/model. Otherwise preserve the query as productName and leave uncertain fields empty.
+Prefer the product's canonical English commercial name in productName when it is well known, because PRICE_CHECK uses exact public metadata matching for the preview image.
 Return JSON ONLY in this exact shape:
 {
   "brand":"",
@@ -110,7 +139,7 @@ Rules:
 - confidence integer 0-100.
 - modelCode must never be fabricated.
 - searchQuery should be concise and prioritize brand + product + model code.
-- Do not return prices or an image URL. PRICE_CHECK derives preview imagery only from cited web pages.
+- Do not return prices or image URLs.
 Manual query: ${JSON.stringify(query)}
 `;
 
@@ -119,12 +148,7 @@ Manual query: ${JSON.stringify(query)}
         method:'POST',
         signal:AbortSignal.timeout(30000),
         headers:{'Content-Type':'application/json','x-goog-api-key':apiKey,'Api-Revision':'2026-05-20'},
-        body:JSON.stringify({
-          model: env.GEMINI_MODEL || MODEL,
-          store:false,
-          input:prompt,
-          tools:[{type:'google_search',search_types:['web_search']}]
-        })
+        body:JSON.stringify({model:env.GEMINI_MODEL || MODEL,store:false,input:prompt})
       });
       const data = await response.json();
       if (!response.ok) {
@@ -134,19 +158,20 @@ Manual query: ${JSON.stringify(query)}
       const rawText = data?.output_text || outputBlocks(data)[0]?.text;
       if (!rawText) throw new Error('empty');
       const parsed = extractJson(rawText);
-      const citations = citationUrls(data);
-      const image = await groundedProductImage(data, fetchImpl);
+      const productName = clean(parsed.productName,160) || query;
+      const image = await wikidataProductImage(productName,fetchImpl);
       const result = {
-        brand: clean(parsed.brand,80),
-        productName: clean(parsed.productName,160) || query,
-        modelCode: clean(parsed.modelCode,80),
-        category: clean(parsed.category,80),
-        confidence: Math.max(0,Math.min(100,Math.round(Number(parsed.confidence)||0))),
-        searchQuery: clean(parsed.searchQuery,200) || query,
+        brand:clean(parsed.brand,80),
+        productName,
+        modelCode:clean(parsed.modelCode,80),
+        category:clean(parsed.category,80),
+        confidence:Math.max(0,Math.min(100,Math.round(Number(parsed.confidence)||0))),
+        searchQuery:clean(parsed.searchQuery,200) || query,
         imageUrl:image.imageUrl,
-        imageSourceUrl:image.imageSourceUrl
+        imageSourceUrl:image.imageSourceUrl,
+        imageProvider:image.imageProvider
       };
-      log(JSON.stringify({event:'pricecheck_identify',outcome:'success',citationCount:citations.length,groundedImage:Boolean(result.imageUrl)}));
+      log(JSON.stringify({event:'pricecheck_identify',outcome:'success',imageProvider:result.imageProvider || 'none'}));
       return res.status(200).json(result);
     } catch (error) {
       const timeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
