@@ -176,43 +176,54 @@ async function googleImageSearchProduct({productName,brand,query,apiKey}, fetchI
   if (!apiKey) return null;
   const exactQuery = clean(query,220) || [clean(brand,80),clean(productName,160)].filter(Boolean).join(' ');
   if (!exactQuery) return null;
-  const prompt = [
-    'Use Google Image Search to find visual evidence for this exact retail product.',
-    'Only use images whose result title matches the same product and every explicit model, capacity, volume, size, pack count, edition or other price-defining variant in the query.',
-    'Reject accessories, logos, screenshots, articles and different variants.',
-    'Reply only: exact product image found.',
-    `Product query: ${JSON.stringify(exactQuery)}`
-  ].join(' ');
-  try {
-    const response = await fetchImpl(IMAGE_SEARCH_URL,{
-      method:'POST',signal:AbortSignal.timeout(18000),
-      headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},
-      body:JSON.stringify({
-        contents:[{parts:[{text:prompt}]}],
-        tools:[{google_search:{searchTypes:{webSearch:{},imageSearch:{}}}}],
-        generationConfig:{responseModalities:['TEXT'],maxOutputTokens:100}
-      })
-    });
-    if (!response?.ok) return null;
-    const data = await response.json();
-    const metadata = data?.candidates?.[0]?.groundingMetadata || {};
-    const searchSuggestionsHtml = typeof metadata?.searchEntryPoint?.renderedContent === 'string' ? metadata.searchEntryPoint.renderedContent : '';
-    const candidates = (metadata.groundingChunks || []).map(chunk => chunk?.image).filter(Boolean)
-      .map(image => ({image,score:imageTitleScore(image.title,exactQuery)}))
-      .filter(item => item.score >= 0)
-      .sort((a,b) => b.score-a.score);
-    for (const {image} of candidates.slice(0,4)) {
-      const imageUri = safeHttpsUrl(image?.imageUri);
-      const sourceUri = safeHttpsUrl(image?.sourceUri);
-      if (!imageUri || !sourceUri) continue;
-      return {
-        imageUrl:imageUri.href,
-        imageSourceUrl:sourceUri.href,
-        imageProvider:'google-image-search',
-        imageSearchSuggestionsHtml:searchSuggestionsHtml
-      };
-    }
-  } catch {}
+  const prompts = [
+    [
+      'Use Google Image Search to find visual evidence for this exact retail product.',
+      'Only use images whose result title matches the same product and every explicit model, capacity, volume, size, pack count, edition or other price-defining variant in the query.',
+      'Reject accessories, logos, screenshots, articles and different variants.',
+      'Reply only: exact product image found.',
+      `Product query: ${JSON.stringify(exactQuery)}`
+    ].join(' '),
+    [
+      'Search Google Images again for an exact product-detail image of this Korean retail item.',
+      'Prioritize Korean retailer, manufacturer, or price-comparison product pages.',
+      'The image result title must identify the same product and include every explicit capacity, volume, size, pack count, model, edition or SKU variant from the query.',
+      'Do not use a similar product, different volume, logo, article, accessory, screenshot, or generic category image.',
+      `Exact query: ${JSON.stringify(exactQuery)}`
+    ].join(' ')
+  ];
+  for (const prompt of prompts) {
+    try {
+      const response = await fetchImpl(IMAGE_SEARCH_URL,{
+        method:'POST',signal:AbortSignal.timeout(18000),
+        headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},
+        body:JSON.stringify({
+          contents:[{parts:[{text:prompt}]}],
+          tools:[{google_search:{searchTypes:{webSearch:{},imageSearch:{}}}}],
+          generationConfig:{responseModalities:['TEXT'],maxOutputTokens:100}
+        })
+      });
+      if (!response?.ok) continue;
+      const data = await response.json();
+      const metadata = data?.candidates?.[0]?.groundingMetadata || {};
+      const searchSuggestionsHtml = typeof metadata?.searchEntryPoint?.renderedContent === 'string' ? metadata.searchEntryPoint.renderedContent : '';
+      const candidates = (metadata.groundingChunks || []).map(chunk => chunk?.image).filter(Boolean)
+        .map(image => ({image,score:imageTitleScore(image.title,exactQuery)}))
+        .filter(item => item.score >= 0)
+        .sort((a,b) => b.score-a.score);
+      for (const {image} of candidates.slice(0,4)) {
+        const imageUri = safeHttpsUrl(image?.imageUri);
+        const sourceUri = safeHttpsUrl(image?.sourceUri);
+        if (!imageUri || !sourceUri) continue;
+        return {
+          imageUrl:imageUri.href,
+          imageSourceUrl:sourceUri.href,
+          imageProvider:'google-image-search',
+          imageSearchSuggestionsHtml:searchSuggestionsHtml
+        };
+      }
+    } catch {}
+  }
   return null;
 }
 
