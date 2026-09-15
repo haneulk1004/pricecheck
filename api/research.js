@@ -5,7 +5,7 @@ import { dedupeResearchPayload } from '../lib/source-dedupe.js';
 
 const researchHandler = createResearchHandler({ fetchImpl: createPromptAwareFetch() });
 const QUOTA_PREFIX = 'pricecheck:{grounding}:v1';
-const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v4';
+const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v5';
 const REFUNDABLE_CODES = new Set(['PROVIDER_ERROR','INVALID_RESPONSE','NO_SOURCES','NO_VERIFIED_PRICES','OPTION_REQUIRED','RESEARCH_FAILED']);
 
 const REFUND_SCRIPT = `
@@ -32,7 +32,10 @@ return 1
 const SELLER_DOMAINS = [
   [/전자랜드/u, ['etlandmall.co.kr','etland.co.kr']],
   [/하이마트|himart/iu, ['e-himart.co.kr']],
-  [/롯데/u, ['lotteon.com','lotte.com','ellotte.com','lotteimall.com']],
+  [/롯데마트|lotte\s*mart/iu, ['lottemartzetta.com']],
+  [/롯데/u, ['lotteon.com','lotte.com','ellotte.com','lotteimall.com','lottemartzetta.com']],
+  [/매일유업|매일다이렉트|maeil/iu, ['maeil.com']],
+  [/교보문고|kyobo/iu, ['kyobobook.co.kr']],
   [/쿠팡/u, ['coupang.com']],
   [/11번가|11st/iu, ['11st.co.kr']],
   [/다나와/u, ['danawa.com']],
