@@ -1,5 +1,6 @@
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 const WIKIDATA_API = 'https://www.wikidata.org/w/api.php';
+const COMMONS_API = 'https://commons.wikimedia.org/w/api.php';
 
 function extractJson(text='') {
   const cleaned = String(text).replace(/```json/gi,'').replace(/```/g,'').trim();
@@ -30,6 +31,10 @@ function safeHttpsUrl(value) {
 
 function normalizedLabel(value='') {
   return String(value).normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'');
+}
+
+function fileBaseTitle(title='') {
+  return String(title).replace(/^File:/i,'').replace(/\.[a-z0-9]{2,5}$/i,'').trim();
 }
 
 function decodeHtml(value='') {
@@ -71,23 +76,24 @@ async function imageFromOfficialPage(pageUrl, fetchImpl) {
 
 async function wikidataProductImage(productName, fetchImpl) {
   const name = clean(productName,160);
-  if (!name) return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+  if (!name) return null;
   try {
     const searchUrl = new URL(WIKIDATA_API);
-    searchUrl.search = new URLSearchParams({action:'wbsearchentities',search:name,language:'en',uselang:'en',type:'item',limit:'5',format:'json',origin:'*'}).toString();
+    searchUrl.search = new URLSearchParams({action:'wbsearchentities',search:name,language:'en',uselang:'en',type:'item',limit:'8',format:'json',origin:'*'}).toString();
     const searchResponse = await fetchImpl(searchUrl.href,{signal:AbortSignal.timeout(4000),headers:{'User-Agent':'PRICE_CHECK/1.0 product-preview'}});
-    if (!searchResponse?.ok) return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+    if (!searchResponse?.ok) return null;
     const searchData = await searchResponse.json();
     const target = normalizedLabel(name);
-    const match = (searchData?.search || []).find(item => normalizedLabel(item?.label) === target);
-    if (!match?.id) return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+    const match = (searchData?.search || []).find(item => normalizedLabel(item?.label) === target || (item?.aliases || []).some(alias => normalizedLabel(alias) === target));
+    if (!match?.id) return null;
 
     const entityUrl = new URL(WIKIDATA_API);
-    entityUrl.search = new URLSearchParams({action:'wbgetentities',ids:match.id,props:'claims|labels',languages:'en',format:'json',origin:'*'}).toString();
+    entityUrl.search = new URLSearchParams({action:'wbgetentities',ids:match.id,props:'claims|labels|aliases',languages:'en',format:'json',origin:'*'}).toString();
     const entityResponse = await fetchImpl(entityUrl.href,{signal:AbortSignal.timeout(4000),headers:{'User-Agent':'PRICE_CHECK/1.0 product-preview'}});
-    if (!entityResponse?.ok) return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+    if (!entityResponse?.ok) return null;
     const entity = (await entityResponse.json())?.entities?.[match.id];
-    if (!entity || normalizedLabel(entity?.labels?.en?.value) !== target) return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+    const labels = [entity?.labels?.en?.value,...(entity?.aliases?.en || []).map(item => item?.value)].filter(Boolean);
+    if (!entity || !labels.some(label => normalizedLabel(label) === target)) return null;
 
     const official = entity?.claims?.P856?.map(claim => claim?.mainsnak?.datavalue?.value).find(Boolean);
     if (official) {
@@ -101,11 +107,47 @@ async function wikidataProductImage(productName, fetchImpl) {
       return {
         imageUrl:`https://commons.wikimedia.org/w/index.php?title=Special:Redirect/file/${encoded}&width=900`,
         imageSourceUrl:`https://commons.wikimedia.org/wiki/File:${encoded}`,
-        imageProvider:'wikimedia'
+        imageProvider:'wikidata'
       };
     }
   } catch {}
-  return {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+  return null;
+}
+
+async function commonsProductImage(productName, fetchImpl) {
+  const name = clean(productName,160);
+  const target = normalizedLabel(name);
+  if (!name || target.length < 4) return null;
+  try {
+    const url = new URL(COMMONS_API);
+    url.search = new URLSearchParams({
+      action:'query', generator:'search', gsrsearch:`intitle:\"${name.replace(/[\"\\]/g,' ')}\"`,
+      gsrnamespace:'6', gsrlimit:'12', prop:'imageinfo', iiprop:'url|mime', iiurlwidth:'900', format:'json', origin:'*'
+    }).toString();
+    const response = await fetchImpl(url.href,{signal:AbortSignal.timeout(5000),headers:{'User-Agent':'PRICE_CHECK/1.0 product-preview'}});
+    if (!response?.ok) return null;
+    const pages = Object.values((await response.json())?.query?.pages || {});
+    const candidates = pages.map(page => {
+      const info = page?.imageinfo?.[0];
+      const base = fileBaseTitle(page?.title);
+      const normalized = normalizedLabel(base);
+      const imageUrl = safeHttpsUrl(info?.thumburl || info?.url);
+      const sourceUrl = safeHttpsUrl(info?.descriptionurl);
+      const mime = String(info?.mime || '').toLowerCase();
+      const exact = normalized === target;
+      const close = normalized.startsWith(target) && !/(logo|wordmark|screen|case|comparison|backside|back$)/i.test(base.slice(name.length));
+      return {exact,close,imageUrl,sourceUrl,mime,base};
+    }).filter(item => item.imageUrl && item.sourceUrl && item.mime.startsWith('image/') && (item.exact || item.close));
+    candidates.sort((a,b) => Number(b.exact)-Number(a.exact) || Number(/jpe?g|png/.test(b.mime))-Number(/jpe?g|png/.test(a.mime)) || a.base.length-b.base.length);
+    const best = candidates[0];
+    return best ? {imageUrl:best.imageUrl.href,imageSourceUrl:best.sourceUrl.href,imageProvider:'wikimedia-commons'} : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveProductImage(productName, fetchImpl=fetch) {
+  return (await wikidataProductImage(productName,fetchImpl)) || (await commonsProductImage(productName,fetchImpl)) || {imageUrl:'',imageSourceUrl:'',imageProvider:''};
 }
 
 export function createIdentifyHandler({ env = process.env, fetchImpl = fetch, log = console.info } = {}) {
@@ -159,7 +201,7 @@ Manual query: ${JSON.stringify(query)}
       if (!rawText) throw new Error('empty');
       const parsed = extractJson(rawText);
       const productName = clean(parsed.productName,160) || query;
-      const image = await wikidataProductImage(productName,fetchImpl);
+      const image = await resolveProductImage(productName,fetchImpl);
       const result = {
         brand:clean(parsed.brand,80),
         productName,
