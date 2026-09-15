@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { alignOfferSources } from '../api/research.js';
 
-const source = url => ({ url });
+const source = (url, title = '') => ({ url, title });
+const grounding = title => source('https://vertexaisearch.cloud.google.com/grounding-api-redirect/example', title);
 
 test('known seller keeps only its own domain', () => {
   const result = alignOfferSources({ offers: [{ seller: '컴퓨존', sources: [source('https://www.compuzone.co.kr/a'), source('https://www.e-himart.co.kr/b'), source('https://www.genesis.com/c')] }] });
@@ -34,4 +35,24 @@ test('SSG alias filters unrelated citations', () => {
   assert.equal(result.offers.length, 1);
   assert.equal(result.offers[0].sources.length, 1);
   assert.match(result.offers[0].sources[0].url, /ssg\.com/);
+});
+
+test('Google grounding redirect uses publisher-domain citation title', () => {
+  const result = alignOfferSources({ offers: [{ seller: '전자랜드', sources: [grounding('etlandmall.co.kr'), grounding('e-himart.co.kr'), grounding('11st.co.kr')] }] });
+  assert.equal(result.offers.length, 1);
+  assert.equal(result.offers[0].sources.length, 1);
+  assert.equal(result.offers[0].sources[0].title, 'etlandmall.co.kr');
+});
+
+test('specific Lotte Hi-Mart rule wins over generic Lotte rule', () => {
+  const result = alignOfferSources({ offers: [{ seller: '롯데하이마트', sources: [grounding('e-himart.co.kr'), grounding('lotteon.com')] }] });
+  assert.equal(result.offers.length, 1);
+  assert.equal(result.offers[0].sources.length, 1);
+  assert.equal(result.offers[0].sources[0].title, 'e-himart.co.kr');
+});
+
+test('Frisbee grounding redirect is recognized', () => {
+  const result = alignOfferSources({ offers: [{ seller: '프리스비', sources: [grounding('frisbeekorea.com')] }] });
+  assert.equal(result.offers.length, 1);
+  assert.equal(result.offers[0].sources.length, 1);
 });
