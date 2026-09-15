@@ -16,7 +16,7 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
 
-  const identifyReq = { method: 'POST', body: { query: 'CW2288-111' }, headers: {} };
+  const identifyReq = { method: 'POST', body: { query: '갤럭시 S25 울트라' }, headers: {} };
   const identifyRes = captureRes();
   await createIdentifyHandler()(identifyReq, identifyRes);
   const identified = identifyRes.payload || {};
@@ -39,12 +39,12 @@ export default async function handler(req, res) {
     method: 'POST',
     body: {
       mode: 'store',
-      brand: identified.brand || 'Nike',
-      productName: identified.productName || "Air Force 1 '07",
-      modelCode: identified.modelCode || 'CW2288-111',
+      brand: identified.brand || 'Samsung',
+      productName: identified.productName || 'Galaxy S25 Ultra',
+      modelCode: identified.modelCode || '',
       size: ''
     },
-    headers: { 'x-forwarded-for': '203.0.113.77' },
+    headers: { 'x-vercel-forwarded-for': '203.0.113.77' },
     socket: { remoteAddress: '203.0.113.77' }
   };
   const researchRes = captureRes();
