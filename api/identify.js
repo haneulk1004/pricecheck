@@ -93,7 +93,7 @@ export function createIdentifyHandler({ env = process.env, fetchImpl = fetch, lo
     const prompt = `
 You are the product-identification engine for PRICE_CHECK, a Korean shopping price verification service.
 The user entered a manual product query. Normalize it into structured product data.
-Use Google Search only as needed to verify the exact commercial product and find its official manufacturer product page.
+Use Google Search to verify the exact commercial product and locate its official manufacturer product page.
 Prefer the official manufacturer product page as the citation source. Do not use community posts, blogs, or marketplace listings when an official product page exists.
 Use only information strongly implied by the query or supported by the search source. Do not invent a brand or model code.
 If the query is itself a model/style/SKU code and you can confidently identify the commercial product, return the verified brand/product/model. Otherwise preserve the query as productName and leave uncertain fields empty.
@@ -123,8 +123,7 @@ Manual query: ${JSON.stringify(query)}
           model: env.GEMINI_MODEL || MODEL,
           store:false,
           input:prompt,
-          tools:[{type:'google_search',search_types:['web_search']}],
-          generation_config:{thinking_level:'low'}
+          tools:[{type:'google_search',search_types:['web_search']}]
         })
       });
       const data = await response.json();
@@ -135,6 +134,7 @@ Manual query: ${JSON.stringify(query)}
       const rawText = data?.output_text || outputBlocks(data)[0]?.text;
       if (!rawText) throw new Error('empty');
       const parsed = extractJson(rawText);
+      const citations = citationUrls(data);
       const image = await groundedProductImage(data, fetchImpl);
       const result = {
         brand: clean(parsed.brand,80),
@@ -146,7 +146,7 @@ Manual query: ${JSON.stringify(query)}
         imageUrl:image.imageUrl,
         imageSourceUrl:image.imageSourceUrl
       };
-      log(JSON.stringify({event:'pricecheck_identify',outcome:'success',groundedImage:Boolean(result.imageUrl)}));
+      log(JSON.stringify({event:'pricecheck_identify',outcome:'success',citationCount:citations.length,groundedImage:Boolean(result.imageUrl)}));
       return res.status(200).json(result);
     } catch (error) {
       const timeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
