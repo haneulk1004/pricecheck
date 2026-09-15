@@ -1,6 +1,7 @@
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 const WIKIDATA_API = 'https://www.wikidata.org/w/api.php';
 const COMMONS_API = 'https://commons.wikimedia.org/w/api.php';
+const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 
 function extractJson(text='') {
   const cleaned = String(text).replace(/```json/gi,'').replace(/```/g,'').trim();
@@ -54,13 +55,13 @@ function metaImage(html='') {
   return '';
 }
 
-async function imageFromOfficialPage(pageUrl, fetchImpl) {
+async function imageFromOfficialPage(pageUrl, fetchImpl, provider='official') {
   const page = safeHttpsUrl(pageUrl);
   if (!page) return null;
   try {
     const response = await fetchImpl(page.href, {
       method:'GET', redirect:'follow', signal:AbortSignal.timeout(4500),
-      headers:{'User-Agent':'PRICE_CHECK/1.0 product-preview'}
+      headers:{'User-Agent':'Mozilla/5.0 (compatible; PRICE_CHECK/1.0; +https://github.com/haneulk1004/pricecheck)','Accept':'text/html,application/xhtml+xml'}
     });
     if (!response?.ok || !String(response.headers?.get?.('content-type') || '').toLowerCase().includes('text/html') || typeof response.text !== 'function') return null;
     const finalUrl = safeHttpsUrl(response.url || page.href);
@@ -68,7 +69,7 @@ async function imageFromOfficialPage(pageUrl, fetchImpl) {
     const candidate = metaImage((await response.text()).slice(0,1500000));
     if (!candidate) return null;
     const image = safeHttpsUrl(new URL(candidate, finalUrl).href);
-    return image ? {imageUrl:image.href,imageSourceUrl:finalUrl.href,imageProvider:'official'} : null;
+    return image ? {imageUrl:image.href,imageSourceUrl:finalUrl.href,imageProvider:provider} : null;
   } catch {
     return null;
   }
@@ -97,7 +98,7 @@ async function wikidataProductImage(productName, fetchImpl) {
 
     const official = entity?.claims?.P856?.map(claim => claim?.mainsnak?.datavalue?.value).find(Boolean);
     if (official) {
-      const officialImage = await imageFromOfficialPage(official,fetchImpl);
+      const officialImage = await imageFromOfficialPage(official,fetchImpl,'official');
       if (officialImage) return officialImage;
     }
 
@@ -146,8 +147,56 @@ async function commonsProductImage(productName, fetchImpl) {
   }
 }
 
-export async function resolveProductImage(productName, fetchImpl=fetch) {
-  return (await wikidataProductImage(productName,fetchImpl)) || (await commonsProductImage(productName,fetchImpl)) || {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+function groundedCitationUrls(data) {
+  const seen = new Set();
+  const urls = [];
+  for (const block of outputBlocks(data)) {
+    for (const annotation of Array.isArray(block?.annotations) ? block.annotations : []) {
+      if (annotation?.type !== 'url_citation') continue;
+      const url = safeHttpsUrl(annotation.url);
+      if (!url || seen.has(url.href)) continue;
+      const host = url.hostname.toLowerCase();
+      if (host === 'google.com' || host.endsWith('.google.com')) continue;
+      seen.add(url.href);
+      urls.push(url.href);
+    }
+  }
+  return urls;
+}
+
+async function groundedProductPageImage({productName,brand,query,apiKey,model}, fetchImpl) {
+  if (!apiKey) return null;
+  const exactQuery = clean(query,200) || [clean(brand,80),clean(productName,160)].filter(Boolean).join(' ');
+  if (!exactQuery) return null;
+  const prompt = [
+    'Find an exact public product page for the Korean shopping product below using Google Search.',
+    'Prefer the manufacturer/brand page, then a major Korean retailer or price-comparison product page.',
+    'The page must visibly match the same brand, product, capacity/size/model and must be a product page, not a search page, article, community post, or unrelated variant.',
+    'Reply with one short Korean sentence confirming the best exact page and cite that exact page inline.',
+    'Do not invent a URL and do not provide an image URL.',
+    `Product query: ${JSON.stringify(exactQuery)}`
+  ].join(' ');
+  try {
+    const response = await fetchImpl(INTERACTIONS_URL, {
+      method:'POST', signal:AbortSignal.timeout(18000),
+      headers:{'Content-Type':'application/json','x-goog-api-key':apiKey,'Api-Revision':'2026-05-20'},
+      body:JSON.stringify({model:model || MODEL,store:false,input:prompt,tools:[{type:'google_search',search_types:['web_search']}],generation_config:{max_output_tokens:1200}})
+    });
+    if (!response?.ok) return null;
+    const data = await response.json();
+    for (const pageUrl of groundedCitationUrls(data).slice(0,5)) {
+      const image = await imageFromOfficialPage(pageUrl,fetchImpl,'google-grounded-page');
+      if (image) return image;
+    }
+  } catch {}
+  return null;
+}
+
+export async function resolveProductImage(productName, fetchImpl=fetch, context={}) {
+  return (await wikidataProductImage(productName,fetchImpl)) ||
+    (await commonsProductImage(productName,fetchImpl)) ||
+    (await groundedProductPageImage({productName,...context},fetchImpl)) ||
+    {imageUrl:'',imageSourceUrl:'',imageProvider:''};
 }
 
 export function createIdentifyHandler({ env = process.env, fetchImpl = fetch, log = console.info } = {}) {
@@ -168,6 +217,7 @@ The user entered a manual product query. Normalize it into structured product da
 Use only information strongly implied by the query. Do not invent a brand or model code.
 If the query is itself a model/style/SKU code and you can confidently identify the commercial product from your knowledge, return the likely brand/product/model. Otherwise preserve the query as productName and leave uncertain fields empty.
 Prefer the product's canonical English commercial name in productName when it is well known, because PRICE_CHECK uses exact public metadata matching for the preview image.
+Preserve price-defining variants explicitly written by the user, including storage/capacity, volume, pack count, size, edition, generation, color when it changes the SKU, and model suffix. Never drop an explicit variant from productName or searchQuery.
 Return JSON ONLY in this exact shape:
 {
   "brand":"",
@@ -180,13 +230,13 @@ Return JSON ONLY in this exact shape:
 Rules:
 - confidence integer 0-100.
 - modelCode must never be fabricated.
-- searchQuery should be concise and prioritize brand + product + model code.
+- searchQuery should be concise and prioritize brand + product + model code + any explicit price-defining variant.
 - Do not return prices or image URLs.
 Manual query: ${JSON.stringify(query)}
 `;
 
     try {
-      const response = await fetchImpl('https://generativelanguage.googleapis.com/v1beta/interactions', {
+      const response = await fetchImpl(INTERACTIONS_URL, {
         method:'POST',
         signal:AbortSignal.timeout(30000),
         headers:{'Content-Type':'application/json','x-goog-api-key':apiKey,'Api-Revision':'2026-05-20'},
@@ -201,14 +251,16 @@ Manual query: ${JSON.stringify(query)}
       if (!rawText) throw new Error('empty');
       const parsed = extractJson(rawText);
       const productName = clean(parsed.productName,160) || query;
-      const image = await resolveProductImage(productName,fetchImpl);
+      const brand = clean(parsed.brand,80);
+      const searchQuery = clean(parsed.searchQuery,200) || query;
+      const image = await resolveProductImage(productName,fetchImpl,{brand,query:searchQuery,apiKey,model:env.GEMINI_MODEL || MODEL});
       const result = {
-        brand:clean(parsed.brand,80),
+        brand,
         productName,
         modelCode:clean(parsed.modelCode,80),
         category:clean(parsed.category,80),
         confidence:Math.max(0,Math.min(100,Math.round(Number(parsed.confidence)||0))),
-        searchQuery:clean(parsed.searchQuery,200) || query,
+        searchQuery,
         imageUrl:image.imageUrl,
         imageSourceUrl:image.imageSourceUrl,
         imageProvider:image.imageProvider
