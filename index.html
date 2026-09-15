@@ -29,7 +29,7 @@
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 
-const EMPTY_PRODUCT = { brand:'', productName:'', modelCode:'', category:'', confidence:0, searchQuery:'', imageSourceUrl:'' };
+const EMPTY_PRODUCT = { brand:'', productName:'', modelCode:'', category:'', confidence:0, searchQuery:'', imageSourceUrl:'', imageSearchSuggestionsHtml:'' };
 
 function App(){
   const [view,setView] = useState('home');
@@ -73,7 +73,8 @@ function App(){
     category:'',
     confidence:100,
     searchQuery:name.trim(),
-    imageSourceUrl:''
+    imageSourceUrl:'',
+    imageSearchSuggestionsHtml:''
   });
 
   const handleManualSearch = async(e)=>{
@@ -98,7 +99,8 @@ function App(){
         category:data.category || '',
         confidence:Number(data.confidence || 0),
         searchQuery:data.searchQuery || q,
-        imageSourceUrl:data.imageSourceUrl || ''
+        imageSourceUrl:data.imageSourceUrl || '',
+        imageSearchSuggestionsHtml:data.imageSearchSuggestionsHtml || ''
       });
       setPreviewImg(data.imageUrl || null);
     } catch(err){
@@ -179,7 +181,8 @@ function App(){
         modelCode:data.modelCode || '', category:data.category || '',
         confidence:Number(data.confidence || 0),
         searchQuery:data.searchQuery || [data.brand,data.productName,data.modelCode].filter(Boolean).join(' '),
-        imageSourceUrl:''
+        imageSourceUrl:'',
+        imageSearchSuggestionsHtml:''
       });
       setView('confirm');
     } catch(err){
@@ -259,7 +262,7 @@ function App(){
     {view==='confirm' && <main className="max-w-4xl mx-auto px-6 md:px-8 pt-32 pb-20 fade-in">
       <div className="mb-8"><p className="text-xs tracking-[.25em] text-zinc-500 font-black uppercase">AI Identification</p><h2 className="text-4xl md:text-6xl font-black mt-3 tracking-tight">이 제품이 맞나요?</h2></div>
       <div className="grid md:grid-cols-2 gap-6">
-        <div>{previewImg ? <><img src={previewImg} onError={()=>setPreviewImg(null)} className="img-preview"/>{product.imageSourceUrl && <a href={product.imageSourceUrl} target="_blank" rel="noopener noreferrer" className="block mt-3 text-xs text-zinc-500 underline underline-offset-4">제품 이미지 출처 확인 ↗</a>}</> : <div className="h-full min-h-[260px] rounded-2xl border border-zinc-800 bg-zinc-950 flex items-center justify-center text-zinc-700"><i data-lucide="search" className="w-16 h-16"></i></div>}</div>
+        <div>{previewImg ? <>{product.imageSourceUrl ? <a href={product.imageSourceUrl} target="_blank" rel="noopener noreferrer"><img src={previewImg} onError={()=>setPreviewImg(null)} className="img-preview"/></a> : <img src={previewImg} onError={()=>setPreviewImg(null)} className="img-preview"/>}{product.imageSourceUrl && <a href={product.imageSourceUrl} target="_blank" rel="noopener noreferrer" className="block mt-3 text-xs text-zinc-500 underline underline-offset-4">제품 이미지 출처 확인 ↗</a>}{product.imageSearchSuggestionsHtml && <iframe title="Google 이미지 검색 제안" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" srcDoc={product.imageSearchSuggestionsHtml} className="w-full mt-3 border-0 rounded-lg bg-white" style={{height:120}} />}</> : <div className="h-full min-h-[260px] rounded-2xl border border-zinc-800 bg-zinc-950 flex items-center justify-center text-zinc-700"><i data-lucide="search" className="w-16 h-16"></i></div>}</div>
         <div className="border border-zinc-800 rounded-2xl p-6 bg-zinc-950">
           <label className="block text-[10px] text-zinc-500 font-black tracking-[.2em] mb-2">BRAND</label><input value={product.brand} onChange={e=>updateProduct('brand',e.target.value)} className="w-full bg-black border border-zinc-800 rounded-lg p-3 mb-5 font-bold outline-none focus:border-white" placeholder="브랜드"/>
           <label className="block text-[10px] text-zinc-500 font-black tracking-[.2em] mb-2">PRODUCT</label><input value={product.productName} onChange={e=>updateProduct('productName',e.target.value)} className="w-full bg-black border border-zinc-800 rounded-lg p-3 mb-5 font-bold outline-none focus:border-white" placeholder="제품명"/>
