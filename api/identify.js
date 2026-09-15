@@ -75,7 +75,7 @@ async function imageFromOfficialPage(pageUrl, fetchImpl, provider='official') {
     const candidate = metaImage((await response.text()).slice(0,1500000));
     if (!candidate) return null;
     const image = safeHttpsUrl(new URL(candidate, finalUrl).href);
-    return image ? {imageUrl:image.href,imageSourceUrl:finalUrl.href,imageProvider:provider} : null;
+    return image ? {imageUrl:image.href,imageSourceUrl:finalUrl.href,imageProvider:provider,imageSearchSuggestionsHtml:''} : null;
   } catch {
     return null;
   }
@@ -114,7 +114,8 @@ async function wikidataProductImage(productName, fetchImpl) {
       return {
         imageUrl:`https://commons.wikimedia.org/w/index.php?title=Special:Redirect/file/${encoded}&width=900`,
         imageSourceUrl:`https://commons.wikimedia.org/wiki/File:${encoded}`,
-        imageProvider:'wikidata'
+        imageProvider:'wikidata',
+        imageSearchSuggestionsHtml:''
       };
     }
   } catch {}
@@ -147,7 +148,7 @@ async function commonsProductImage(productName, fetchImpl) {
     }).filter(item => item.imageUrl && item.sourceUrl && item.mime.startsWith('image/') && (item.exact || item.close));
     candidates.sort((a,b) => Number(b.exact)-Number(a.exact) || Number(/jpe?g|png/.test(b.mime))-Number(/jpe?g|png/.test(a.mime)) || a.base.length-b.base.length);
     const best = candidates[0];
-    return best ? {imageUrl:best.imageUrl.href,imageSourceUrl:best.sourceUrl.href,imageProvider:'wikimedia-commons'} : null;
+    return best ? {imageUrl:best.imageUrl.href,imageSourceUrl:best.sourceUrl.href,imageProvider:'wikimedia-commons',imageSearchSuggestionsHtml:''} : null;
   } catch {
     return null;
   }
@@ -169,21 +170,6 @@ function imageTitleScore(title, query) {
   const matched = uniqueWords.filter(word => normalizedTitle.includes(word)).length;
   const required = Math.min(2, uniqueWords.length);
   return matched >= required ? matched + variants.length * 4 : -1;
-}
-
-async function verifiedGroundedImage(image, fetchImpl) {
-  const imageUri = safeHttpsUrl(image?.imageUri);
-  const sourceUri = safeHttpsUrl(image?.sourceUri);
-  if (!imageUri || !sourceUri) return null;
-  try {
-    const response = await fetchImpl(imageUri.href,{method:'GET',redirect:'follow',signal:AbortSignal.timeout(7000)});
-    const contentType = String(response?.headers?.get?.('content-type') || '').toLowerCase();
-    const finalImage = safeHttpsUrl(response?.url || imageUri.href);
-    if (!response?.ok || !contentType.startsWith('image/') || !finalImage) return null;
-    return {imageUrl:finalImage.href,imageSourceUrl:sourceUri.href,imageProvider:'google-image-search'};
-  } catch {
-    return null;
-  }
 }
 
 async function googleImageSearchProduct({productName,brand,query,apiKey}, fetchImpl) {
@@ -209,14 +195,22 @@ async function googleImageSearchProduct({productName,brand,query,apiKey}, fetchI
     });
     if (!response?.ok) return null;
     const data = await response.json();
-    const chunks = data?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    const candidates = chunks.map(chunk => chunk?.image).filter(Boolean)
+    const metadata = data?.candidates?.[0]?.groundingMetadata || {};
+    const searchSuggestionsHtml = typeof metadata?.searchEntryPoint?.renderedContent === 'string' ? metadata.searchEntryPoint.renderedContent : '';
+    const candidates = (metadata.groundingChunks || []).map(chunk => chunk?.image).filter(Boolean)
       .map(image => ({image,score:imageTitleScore(image.title,exactQuery)}))
       .filter(item => item.score >= 0)
       .sort((a,b) => b.score-a.score);
     for (const {image} of candidates.slice(0,4)) {
-      const verified = await verifiedGroundedImage(image,fetchImpl);
-      if (verified) return verified;
+      const imageUri = safeHttpsUrl(image?.imageUri);
+      const sourceUri = safeHttpsUrl(image?.sourceUri);
+      if (!imageUri || !sourceUri) continue;
+      return {
+        imageUrl:imageUri.href,
+        imageSourceUrl:sourceUri.href,
+        imageProvider:'google-image-search',
+        imageSearchSuggestionsHtml:searchSuggestionsHtml
+      };
     }
   } catch {}
   return null;
@@ -229,7 +223,7 @@ export async function resolveProductImage(productName, fetchImpl=fetch, context=
   ]);
   return wikidata || commons ||
     (await googleImageSearchProduct({productName,...context},fetchImpl)) ||
-    {imageUrl:'',imageSourceUrl:'',imageProvider:''};
+    {imageUrl:'',imageSourceUrl:'',imageProvider:'',imageSearchSuggestionsHtml:''};
 }
 
 export function createIdentifyHandler({ env = process.env, fetchImpl = fetch, log = console.info } = {}) {
@@ -286,7 +280,7 @@ Manual query: ${JSON.stringify(query)}
       const productName = clean(parsed.productName,160) || query;
       const brand = clean(parsed.brand,80);
       const searchQuery = clean(parsed.searchQuery,200) || query;
-      const image = await resolveProductImage(productName,fetchImpl,{brand,query:[query,searchQuery].filter(Boolean).join(' '),apiKey});
+      const image = await resolveProductImage(productName,fetchImpl,{brand,query,apiKey});
       const result = {
         brand,
         productName,
@@ -296,7 +290,8 @@ Manual query: ${JSON.stringify(query)}
         searchQuery,
         imageUrl:image.imageUrl,
         imageSourceUrl:image.imageSourceUrl,
-        imageProvider:image.imageProvider
+        imageProvider:image.imageProvider,
+        imageSearchSuggestionsHtml:image.imageSearchSuggestionsHtml || ''
       };
       log(JSON.stringify({event:'pricecheck_identify',outcome:'success',imageProvider:result.imageProvider || 'none'}));
       return res.status(200).json(result);
