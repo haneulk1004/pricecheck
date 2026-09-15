@@ -5,8 +5,8 @@ import { dedupeResearchPayload } from '../lib/source-dedupe.js';
 
 const researchHandler = createResearchHandler({ fetchImpl: createPromptAwareFetch() });
 const QUOTA_PREFIX = 'pricecheck:{grounding}:v1';
-const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v3';
-const REFUNDABLE_CODES = new Set(['PROVIDER_ERROR','INVALID_RESPONSE','NO_SOURCES','NO_VERIFIED_PRICES','RESEARCH_FAILED']);
+const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v4';
+const REFUNDABLE_CODES = new Set(['PROVIDER_ERROR','INVALID_RESPONSE','NO_SOURCES','NO_VERIFIED_PRICES','OPTION_REQUIRED','RESEARCH_FAILED']);
 
 const REFUND_SCRIPT = `
 local now = tonumber(redis.call('TIME')[1])
@@ -113,6 +113,40 @@ export function alignOfferSources(payload) {
   return { ...payload, offers };
 }
 
+function capacityToken(value) {
+  const text = String(value || '').normalize('NFKC').toUpperCase();
+  const match = text.match(/(?:^|[^A-Z0-9])(\d+(?:\.\d+)?)\s*(TB|GB)(?:$|[^A-Z0-9])/u);
+  if (!match) return '';
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return '';
+  return `${amount}${match[2]}`;
+}
+
+export function alignOfferCapacity(payload, requestBody = {}) {
+  if (!payload || !Array.isArray(payload.offers) || payload.offers.length === 0) return { payload, optionRequired: false, variants: [] };
+  const requested = capacityToken(`${requestBody.productName || ''} ${requestBody.modelCode || ''}`);
+  const tagged = payload.offers.map(offer => ({ offer, capacity: capacityToken(`${offer.productName || ''} ${offer.note || ''}`) }));
+  const variants = [...new Set(tagged.map(item => item.capacity).filter(Boolean))];
+
+  if (requested) {
+    const offers = tagged.filter(item => item.capacity === requested).map(item => item.offer);
+    return { payload: { ...payload, offers }, optionRequired: false, variants };
+  }
+
+  if (variants.length > 1) {
+    return { payload: { ...payload, offers: [] }, optionRequired: true, variants };
+  }
+
+  if (variants.length === 1) {
+    // Once storage capacity appears in the evidence, keep only offers that explicitly
+    // state that same capacity instead of mixing in ambiguous listings.
+    const offers = tagged.filter(item => item.capacity === variants[0]).map(item => item.offer);
+    return { payload: { ...payload, offers }, optionRequired: false, variants };
+  }
+
+  return { payload, optionRequired: false, variants };
+}
+
 async function migrateLegacyCache(req) {
   try {
     const input = normalizeInput(req.body);
@@ -168,7 +202,23 @@ export default async function handler(req, res) {
       }));
     }
 
-    return originalJson(aligned);
+    const capacityAligned = alignOfferCapacity(aligned, req.body);
+    if (capacityAligned.optionRequired) {
+      res.status(422);
+      return refundFailedAdmission(req, 'OPTION_REQUIRED').then(() => originalJson({
+        code: 'OPTION_REQUIRED',
+        error: `서로 다른 저장용량(${capacityAligned.variants.join(', ')})의 가격이 함께 확인되어 결과를 표시하지 않습니다. 제품명에 원하는 용량(예: 256GB)을 입력한 뒤 다시 조사해주세요.`
+      }));
+    }
+    if (aligned.offers?.length > 0 && capacityAligned.payload.offers.length === 0) {
+      res.status(422);
+      return refundFailedAdmission(req, 'NO_VERIFIED_PRICES').then(() => originalJson({
+        code: 'NO_VERIFIED_PRICES',
+        error: '요청한 저장용량과 정확히 일치하는 가격 출처를 확인하지 못해 결과를 표시하지 않습니다.'
+      }));
+    }
+
+    return originalJson(capacityAligned.payload);
   };
 
   return researchHandler(req, res);
