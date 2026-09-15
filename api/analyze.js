@@ -47,6 +47,8 @@ Rules:
 - NEVER infer, recall, guess, or derive modelCode from the recognized product identity, regional catalog knowledge, common web listings, or memory. If the code is not literally readable in the image, modelCode MUST be an empty string.
 - A family/internal/regional code that is merely associated with the recognized product must not be returned unless that exact code is visibly readable in the image.
 - You may still identify brand and productName from visual appearance when reasonably confident.
+- Price-defining variants such as storage capacity (for example 256GB/512GB/1TB), RAM, screen size, pack count, edition, or other configuration MUST be included in productName and searchQuery only when that variant is clearly readable or otherwise directly visible in the submitted image. Never infer a variant from the product family.
+- If a price-defining variant is not visually supported, omit it. PRICE_CHECK will refuse to mix conflicting storage variants during price research.
 - searchQuery should use brand + productName, and include modelCode only when modelCode passed the strict visible-evidence rule above.
 - Do not estimate or return prices.
 - If identification is uncertain, lower confidence instead of fabricating details.
