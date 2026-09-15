@@ -1,7 +1,9 @@
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const IMAGE_SEARCH_MODEL = 'gemini-3.1-flash-image';
 const WIKIDATA_API = 'https://www.wikidata.org/w/api.php';
 const COMMONS_API = 'https://commons.wikimedia.org/w/api.php';
 const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+const IMAGE_SEARCH_URL = `https://generativelanguage.googleapis.com/v1beta/models/${IMAGE_SEARCH_MODEL}:generateContent`;
 
 function extractJson(text='') {
   const cleaned = String(text).replace(/```json/gi,'').replace(/```/g,'').trim();
@@ -40,6 +42,10 @@ function fileBaseTitle(title='') {
 
 function decodeHtml(value='') {
   return String(value).replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+}
+
+function stripHtml(value='') {
+  return decodeHtml(String(value).replace(/<[^>]*>/g,' ')).replace(/\s+/g,' ').trim();
 }
 
 function metaImage(html='') {
@@ -147,55 +153,82 @@ async function commonsProductImage(productName, fetchImpl) {
   }
 }
 
-function groundedCitationUrls(data) {
-  const seen = new Set();
-  const urls = [];
-  for (const block of outputBlocks(data)) {
-    for (const annotation of Array.isArray(block?.annotations) ? block.annotations : []) {
-      if (annotation?.type !== 'url_citation') continue;
-      const url = safeHttpsUrl(annotation.url);
-      if (!url || seen.has(url.href)) continue;
-      const host = url.hostname.toLowerCase();
-      if (host === 'google.com' || host.endsWith('.google.com')) continue;
-      seen.add(url.href);
-      urls.push(url.href);
-    }
-  }
-  return urls;
+function variantTokens(value='') {
+  return [...String(value).normalize('NFKC').matchAll(/\b\d+(?:[.,]\d+)?\s*(?:ML|L|MG|G|KG|GB|TB|MM|CM|INCH|인치|개|입)\b/giu)].map(match => normalizedLabel(match[0]));
 }
 
-async function groundedProductPageImage({productName,brand,query,apiKey,model}, fetchImpl) {
+function imageTitleScore(title, query) {
+  const visible = stripHtml(title);
+  const normalizedTitle = normalizedLabel(visible);
+  const variants = variantTokens(query);
+  if (variants.some(token => !normalizedTitle.includes(token))) return -1;
+  const words = clean(query,220).split(/\s+/u)
+    .map(word => normalizedLabel(word))
+    .filter(word => word.length >= 2 && !variants.includes(word));
+  const uniqueWords = [...new Set(words)];
+  const matched = uniqueWords.filter(word => normalizedTitle.includes(word)).length;
+  const required = Math.min(2, uniqueWords.length);
+  return matched >= required ? matched + variants.length * 4 : -1;
+}
+
+async function verifiedGroundedImage(image, fetchImpl) {
+  const imageUri = safeHttpsUrl(image?.imageUri);
+  const sourceUri = safeHttpsUrl(image?.sourceUri);
+  if (!imageUri || !sourceUri) return null;
+  try {
+    const response = await fetchImpl(imageUri.href,{method:'GET',redirect:'follow',signal:AbortSignal.timeout(7000)});
+    const contentType = String(response?.headers?.get?.('content-type') || '').toLowerCase();
+    const finalImage = safeHttpsUrl(response?.url || imageUri.href);
+    if (!response?.ok || !contentType.startsWith('image/') || !finalImage) return null;
+    return {imageUrl:finalImage.href,imageSourceUrl:sourceUri.href,imageProvider:'google-image-search'};
+  } catch {
+    return null;
+  }
+}
+
+async function googleImageSearchProduct({productName,brand,query,apiKey}, fetchImpl) {
   if (!apiKey) return null;
-  const exactQuery = clean(query,200) || [clean(brand,80),clean(productName,160)].filter(Boolean).join(' ');
+  const exactQuery = clean(query,220) || [clean(brand,80),clean(productName,160)].filter(Boolean).join(' ');
   if (!exactQuery) return null;
   const prompt = [
-    'Find an exact public product page for the Korean shopping product below using Google Search.',
-    'Prefer the manufacturer/brand page, then a major Korean retailer or price-comparison product page.',
-    'The page must visibly match the same brand, product, capacity/size/model and must be a product page, not a search page, article, community post, or unrelated variant.',
-    'Reply with one short Korean sentence confirming the best exact page and cite that exact page inline.',
-    'Do not invent a URL and do not provide an image URL.',
+    'Use Google Image Search to find visual evidence for this exact retail product.',
+    'Only use images whose result title matches the same product and every explicit model, capacity, volume, size, pack count, edition or other price-defining variant in the query.',
+    'Reject accessories, logos, screenshots, articles and different variants.',
+    'Reply only: exact product image found.',
     `Product query: ${JSON.stringify(exactQuery)}`
   ].join(' ');
   try {
-    const response = await fetchImpl(INTERACTIONS_URL, {
-      method:'POST', signal:AbortSignal.timeout(18000),
-      headers:{'Content-Type':'application/json','x-goog-api-key':apiKey,'Api-Revision':'2026-05-20'},
-      body:JSON.stringify({model:model || MODEL,store:false,input:prompt,tools:[{type:'google_search',search_types:['web_search']}],generation_config:{max_output_tokens:1200}})
+    const response = await fetchImpl(IMAGE_SEARCH_URL,{
+      method:'POST',signal:AbortSignal.timeout(18000),
+      headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},
+      body:JSON.stringify({
+        contents:[{parts:[{text:prompt}]}],
+        tools:[{google_search:{searchTypes:{webSearch:{},imageSearch:{}}}}],
+        generationConfig:{responseModalities:['TEXT'],maxOutputTokens:100}
+      })
     });
     if (!response?.ok) return null;
     const data = await response.json();
-    for (const pageUrl of groundedCitationUrls(data).slice(0,5)) {
-      const image = await imageFromOfficialPage(pageUrl,fetchImpl,'google-grounded-page');
-      if (image) return image;
+    const chunks = data?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const candidates = chunks.map(chunk => chunk?.image).filter(Boolean)
+      .map(image => ({image,score:imageTitleScore(image.title,exactQuery)}))
+      .filter(item => item.score >= 0)
+      .sort((a,b) => b.score-a.score);
+    for (const {image} of candidates.slice(0,4)) {
+      const verified = await verifiedGroundedImage(image,fetchImpl);
+      if (verified) return verified;
     }
   } catch {}
   return null;
 }
 
 export async function resolveProductImage(productName, fetchImpl=fetch, context={}) {
-  return (await wikidataProductImage(productName,fetchImpl)) ||
-    (await commonsProductImage(productName,fetchImpl)) ||
-    (await groundedProductPageImage({productName,...context},fetchImpl)) ||
+  const [wikidata,commons] = await Promise.all([
+    wikidataProductImage(productName,fetchImpl),
+    commonsProductImage(productName,fetchImpl)
+  ]);
+  return wikidata || commons ||
+    (await googleImageSearchProduct({productName,...context},fetchImpl)) ||
     {imageUrl:'',imageSourceUrl:'',imageProvider:''};
 }
 
@@ -253,7 +286,7 @@ Manual query: ${JSON.stringify(query)}
       const productName = clean(parsed.productName,160) || query;
       const brand = clean(parsed.brand,80);
       const searchQuery = clean(parsed.searchQuery,200) || query;
-      const image = await resolveProductImage(productName,fetchImpl,{brand,query:searchQuery,apiKey,model:env.GEMINI_MODEL || MODEL});
+      const image = await resolveProductImage(productName,fetchImpl,{brand,query:[query,searchQuery].filter(Boolean).join(' '),apiKey});
       const result = {
         brand,
         productName,
