@@ -11,12 +11,12 @@ const legacy = {
   }
 };
 
-test('research request keeps the proven structured Google Search profile', () => {
+test('research request uses low thinking with structured Google Search', () => {
   const request = buildResellInteractionRequest(legacy, input, 'gemini-3.8-flash');
   assert.equal(request.model, 'gemini-3.8-flash');
   assert.deepEqual(request.tools, [{ type: 'google_search', search_types: ['web_search'] }]);
   assert.equal(request.generation_config.max_output_tokens, 4096);
-  assert.equal(request.generation_config.thinking_level, undefined);
+  assert.equal(request.generation_config.thinking_level, 'low');
   assert.equal(request.generation_config.tool_choice, undefined);
   assert.equal(request.response_format.type, 'text');
   assert.equal(request.response_format.mime_type, 'application/json');
@@ -64,6 +64,18 @@ test('Korean output accepts UTF-8 byte citation offsets', () => {
   assert.equal(result.offers[0].sources[0].url, 'https://example.com/korean-item');
 });
 
+test('incomplete interactions are never parsed as complete JSON', () => {
+  const text = '{"offers":[{"seller":"전자랜드"';
+  const converted = interactionToGenerateContent({
+    status: 'incomplete',
+    steps: [{ type: 'model_output', content: [{ type: 'text', text, annotations: [{ type: 'url_citation', url: 'https://example.com', title: 'example.com', start_index: 0, end_index: 10 }] }] }]
+  });
+  assert.throws(
+    () => parseGroundedPrices(converted),
+    error => error?.code === 'INVALID_RESPONSE' && error?.status === 502
+  );
+});
+
 test('prompt-aware fetch performs exactly one paid interaction even when citations are absent', async () => {
   const text = JSON.stringify({ offers: [{ seller: 'KREAM', productName: 'Air Force 1', priceKRW: 120000, condition: '거래가', note: '260mm' }] });
   const interaction = {
@@ -89,7 +101,7 @@ test('prompt-aware fetch performs exactly one paid interaction even when citatio
   assert.equal(calls.length, 1);
   assert.equal(calls[0].response_format.mime_type, 'application/json');
   assert.deepEqual(calls[0].response_format.schema, legacy.generationConfig.responseFormat.text.schema);
-  assert.equal(calls[0].generation_config.thinking_level, undefined);
+  assert.equal(calls[0].generation_config.thinking_level, 'low');
   assert.throws(
     () => parseGroundedPrices(converted),
     error => error?.code === 'NO_SOURCES' && error?.status === 422
