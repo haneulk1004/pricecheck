@@ -1,6 +1,6 @@
 export default async function handler(req,res) {
   try {
-    const response=await fetch('https://generativelanguage.googleapis.com/v1/models/gemini-3.1-flash-image:generateContent',{
+    const response=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent',{
       method:'POST',signal:AbortSignal.timeout(30000),
       headers:{'Content-Type':'application/json','x-goog-api-key':process.env.GEMINI_API_KEY},
       body:JSON.stringify({
