@@ -1,15 +1,16 @@
+function strip(value=''){return String(value).replace(/<[^>]+>/g,' ').replace(/&[^;]+;/g,' ').replace(/\s+/g,' ').trim();}
 export default async function handler(req,res) {
   try {
-    const prompt = 'Use Google Search to find the exact Korean retailer product page for 해태 갈아만든 배 340ml. The page must visibly match 해태, 갈아만든 배 and 340ml. In your answer write exactly two lines: first the exact product name, second the canonical destination URL beginning https:// as shown by the search result. Also cite the exact product page inline. Do not output a Google or vertexaisearch redirect URL.';
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions',{
-      method:'POST',signal:AbortSignal.timeout(20000),
-      headers:{'Content-Type':'application/json','x-goog-api-key':process.env.GEMINI_API_KEY,'Api-Revision':'2026-05-20'},
-      body:JSON.stringify({model:process.env.GEMINI_MODEL || 'gemini-3.8-flash',store:false,input:prompt,tools:[{type:'google_search',search_types:['web_search']}],generation_config:{max_output_tokens:1200}})
+    const url='https://search.danawa.com/dsearch.php?query='+encodeURIComponent('해태 갈아만든 배 340ml');
+    const response=await fetch(url,{signal:AbortSignal.timeout(10000),headers:{'User-Agent':'Mozilla/5.0 (compatible; PRICE_CHECK/1.0)','Accept':'text/html'}});
+    const html=await response.text();
+    const blocks=[...html.matchAll(/<li\b[^>]*class=["'][^"']*prod_item[^"']*["'][^>]*>[\s\S]*?<\/li>/gi)].slice(0,8).map(m=>m[0]);
+    const items=blocks.map(block=>{
+      const name=strip(block.match(/<p\b[^>]*class=["'][^"']*prod_name[^"']*["'][^>]*>([\s\S]*?)<\/p>/i)?.[1]||'');
+      const img=block.match(/<img\b[^>]*(?:data-original|data-src|src)=["']([^"']+)["'][^>]*>/i)?.[1]||'';
+      const link=block.match(/<p\b[^>]*class=["'][^"']*prod_name[^"']*["'][^>]*>[\s\S]*?<a\b[^>]*href=["']([^"']+)["']/i)?.[1]||'';
+      return {name,img,link};
     });
-    const data = await response.json();
-    const outputs = (data?.steps || []).filter(step=>step?.type==='model_output').flatMap(step=>step.content || []).filter(block=>block?.type==='text').map(block=>({text:block.text,annotations:(block.annotations || []).map(a=>({type:a.type,url:a.url,title:a.title}))}));
-    return res.status(response.ok?200:response.status).json({ok:response.ok,status:data?.status,outputs});
-  } catch(error) {
-    return res.status(500).json({ok:false,error:error?.message || 'diagnostic failed'});
-  }
+    return res.status(200).json({ok:response.ok,status:response.status,contentType:response.headers.get('content-type'),htmlLength:html.length,blockCount:blocks.length,items});
+  } catch(error){return res.status(500).json({ok:false,error:error?.message||'failed'});}
 }
