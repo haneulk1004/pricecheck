@@ -1,5 +1,6 @@
 {
   "functions": {
+    "api/identify.js": { "maxDuration": 60 },
     "api/research.js": { "maxDuration": 60 }
   }
 }

@@ -1,4 +1,5 @@
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const IDENTIFY_BUDGET_MS = 50000;
 const IMAGE_SEARCH_MODEL = 'gemini-3.1-flash-image';
 const WIKIDATA_API = 'https://www.wikidata.org/w/api.php';
 const COMMONS_API = 'https://commons.wikimedia.org/w/api.php';
@@ -172,6 +173,39 @@ function imageTitleScore(title, query) {
   return matched >= required ? matched + variants.length * 4 : -1;
 }
 
+// Only inline small raster images returned by the grounded image provider.
+// This avoids making the phone follow the provider's redirect at render time.
+export async function readableGroundedImage(imageUrl, fetchImpl = fetch) {
+  const url = safeHttpsUrl(imageUrl);
+  if (!url || url.hostname !== 'vertexaisearch.cloud.google.com' ||
+      !url.pathname.startsWith('/grounding-api-redirect/')) return null;
+  const limit = 1500000;
+  try {
+    const response = await fetchImpl(url.href, { signal: AbortSignal.timeout(6000), redirect: 'follow' });
+    const mime = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!response.ok || !['image/jpeg','image/png','image/webp','image/gif'].includes(mime)) return null;
+    if (Number(response.headers.get('content-length')) > limit) { await response.body?.cancel(); return null; }
+    if (!response.body) return null;
+    const reader = response.body.getReader();
+    const chunks = []; let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > limit) { await reader.cancel(); return null; }
+        chunks.push(Buffer.from(value));
+      }
+    } finally { reader.releaseLock(); }
+    const bytes = Buffer.concat(chunks);
+    const valid = mime === 'image/jpeg' ? bytes.subarray(0,3).equals(Buffer.from([255,216,255]))
+      : mime === 'image/png' ? bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+      : mime === 'image/gif' ? /^GIF8[79]a/.test(bytes.subarray(0,6).toString())
+      : bytes.subarray(0,4).toString() === 'RIFF' && bytes.subarray(8,12).toString() === 'WEBP';
+    return valid ? `data:${mime};base64,${bytes.toString('base64')}` : null;
+  } catch { return null; }
+}
+
 async function googleImageSearchProduct({productName,brand,query,apiKey}, fetchImpl) {
   if (!apiKey) return null;
   const exactQuery = clean(query,220) || [clean(brand,80),clean(productName,160)].filter(Boolean).join(' ');
@@ -195,7 +229,7 @@ async function googleImageSearchProduct({productName,brand,query,apiKey}, fetchI
   for (const prompt of prompts) {
     try {
       const response = await fetchImpl(IMAGE_SEARCH_URL,{
-        method:'POST',signal:AbortSignal.timeout(18000),
+        method:'POST',signal:AbortSignal.timeout(12000),
         headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},
         body:JSON.stringify({
           contents:[{parts:[{text:prompt}]}],
@@ -215,8 +249,11 @@ async function googleImageSearchProduct({productName,brand,query,apiKey}, fetchI
         const imageUri = safeHttpsUrl(image?.imageUri);
         const sourceUri = safeHttpsUrl(image?.sourceUri);
         if (!imageUri || !sourceUri) continue;
+        const inlineImage = imageUri.hostname === 'vertexaisearch.cloud.google.com'
+          ? await readableGroundedImage(imageUri.href, fetchImpl) : imageUri.href;
+        if (!inlineImage) continue;
         return {
-          imageUrl:imageUri.href,
+          imageUrl:inlineImage,
           imageSourceUrl:sourceUri.href,
           imageProvider:'google-image-search',
           imageSearchSuggestionsHtml:searchSuggestionsHtml
@@ -273,8 +310,10 @@ Rules:
 Manual query: ${JSON.stringify(query)}
 `;
 
+    const deadline = AbortSignal.timeout(IDENTIFY_BUDGET_MS);
+    const boundedFetch = (url, options = {}) => fetchImpl(url, { ...options, signal: options.signal ? AbortSignal.any([deadline, options.signal]) : deadline });
     try {
-      const response = await fetchImpl(INTERACTIONS_URL, {
+      const response = await boundedFetch(INTERACTIONS_URL, {
         method:'POST',
         signal:AbortSignal.timeout(30000),
         headers:{'Content-Type':'application/json','x-goog-api-key':apiKey,'Api-Revision':'2026-05-20'},
@@ -291,7 +330,7 @@ Manual query: ${JSON.stringify(query)}
       const productName = clean(parsed.productName,160) || query;
       const brand = clean(parsed.brand,80);
       const searchQuery = clean(parsed.searchQuery,200) || query;
-      const image = await resolveProductImage(productName,fetchImpl,{brand,query,apiKey});
+      const image = await resolveProductImage(productName,boundedFetch,{brand,query,apiKey});
       const result = {
         brand,
         productName,
