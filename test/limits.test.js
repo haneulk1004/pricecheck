@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fengari from 'fengari';
+import { REFUND_SCRIPT } from '../api/research.js';
 import { ADMIT_SCRIPT } from '../lib/price-research.js';
 const { lua, lauxlib, lualib, to_luastring, to_jsstring } = fengari;
 test('actual Lua: configurable IP/global limits, cache precedence, KST rollover and 1000 reservations',()=>{
@@ -48,5 +49,30 @@ assert(admit('custom-miss','custom',10,300)[1]=='IP_LIMIT')
 `;
   const code=lauxlib.luaL_dostring(L,to_luastring(program));
   assert.equal(code,lua.LUA_OK,code===lua.LUA_OK?'':to_jsstring(lua.lua_tostring(L,-1)));
+  lua.lua_close(L);
+});
+
+
+test('refund crossing KST midnight only touches the original reservation day', () => {
+  const L = lauxlib.luaL_newstate(); lualib.luaL_openlibs(L);
+  const program = `
+local store = {['ip:100'] = 2, ['global:100'] = 10, ['ip:101'] = 3, ['global:101'] = 20}
+redis = {call = function(cmd, key)
+  if cmd == 'GET' then return store[key] end
+  if cmd == 'DECR' then store[key] = store[key] - 1; return store[key] end
+  error('unexpected command')
+end}
+KEYS = {'ip', 'global'}
+ARGV = {tostring(101 * 86400 - 32400)}
+local result = (function() ${REFUND_SCRIPT} end)()
+assert(store['ip:100'] == 1 and store['global:100'] == 9)
+assert(store['ip:101'] == 3 and store['global:101'] == 20)
+store['ip:100'] = nil; store['global:100'] = nil
+result = (function() ${REFUND_SCRIPT} end)()
+assert(store['ip:100'] == nil and store['global:100'] == nil)
+assert(store['ip:101'] == 3 and store['global:101'] == 20)
+`;
+  const code = lauxlib.luaL_dostring(L, to_luastring(program));
+  assert.equal(code, lua.LUA_OK, code === lua.LUA_OK ? '' : to_jsstring(lua.lua_tostring(L, -1)));
   lua.lua_close(L);
 });

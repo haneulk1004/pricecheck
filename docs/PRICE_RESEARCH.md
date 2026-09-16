@@ -44,3 +44,11 @@ Preview에서 `error.code=400`, `error.status=INVALID_ARGUMENT`, `classification
 요청 조합은 `/v1beta/models/gemini-3.8-flash:generateContent`, `tools: [{google_search: {}}]`, `generationConfig.responseFormat.text: {mimeType: "APPLICATION_JSON", schema: ...}`입니다. `responseMimeType`/`responseSchema` 등 다른 출력 설정을 중복 지정하지 않습니다.
 
 오류 로그는 HTTP 상태와 `error.code`, 대문자 식별자로 검증한 `error.status`, 최대 10개 `details[].reason`, 고정된 분류명만 기록합니다. `message`, `metadata`, `fieldViolations` 원문, 키, 요청/응답 본문은 기록하거나 클라이언트로 반환하지 않습니다. JSON이 아닌 오류도 고정 분류만 남깁니다.
+
+## 캐시 및 실패 환불 수정 (2026-09-16 KST)
+
+- 판매처·출처 정합성, 중복 출처, 저장용량을 검증한 **최종 결과만** 캐시에 저장합니다. 이전에는 저장 후 응답 단계에서 검증하여 실패 결과가 반복 조회될 수 있었습니다.
+- 캐시 버전을 v3로 올려 기존 미검증 캐시를 재사용하지 않습니다. 일일 한도 키는 유지합니다.
+- 실패 환불은 이번 요청에서 실제 사용량 예약이 발생했을 때만 처리합니다. 캐시 조회·입력 오류는 환불하지 않습니다.
+- 한국시간 자정을 넘어 끝난 요청은 예약 당시 날짜의 횟수만 복구합니다.
+- 로컬 자동 테스트 59개 통과. 프리뷰 실제 검색 검증은 별도로 수행합니다.

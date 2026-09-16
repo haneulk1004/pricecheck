@@ -1,16 +1,15 @@
-import { createResearchHandler, cacheKey, hashClientIP, normalizeInput, redisCommand } from '../lib/price-research.js';
+import { createResearchHandler, cacheKey, hashClientIP, normalizeInput, redisCommand, ResearchError } from '../lib/price-research.js';
 import { createPromptAwareFetch } from '../lib/resell-grounding.js';
 import { parseAndCanonicalizeResearchBody } from '../lib/research-request.js';
 import { dedupeResearchPayload } from '../lib/source-dedupe.js';
 
-const researchHandler = createResearchHandler({ fetchImpl: createPromptAwareFetch() });
+const researchHandler = createResearchHandler({ fetchImpl: createPromptAwareFetch(), preparePayload: prepareResearchPayload });
 const QUOTA_PREFIX = 'pricecheck:{grounding}:v1';
 const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v5';
 const REFUNDABLE_CODES = new Set(['PROVIDER_ERROR','INVALID_RESPONSE','NO_SOURCES','NO_VERIFIED_PRICES','OPTION_REQUIRED','RESEARCH_FAILED']);
 
-const REFUND_SCRIPT = `
-local now = tonumber(redis.call('TIME')[1])
-local day = math.floor((now + 32400) / 86400)
+export const REFUND_SCRIPT = `
+local day = math.floor((tonumber(ARGV[1]) + 32400) / 86400) - 1
 local ipkey = KEYS[1] .. ':' .. day
 local globalkey = KEYS[2] .. ':' .. day
 local ip = tonumber(redis.call('GET', ipkey) or '0')
@@ -168,11 +167,13 @@ async function migrateLegacyCache(req) {
 }
 
 async function refundFailedAdmission(req, code) {
-  if (!REFUNDABLE_CODES.has(code)) return;
+  if (!REFUNDABLE_CODES.has(code) || !req.researchAdmission) return;
+  const { resetAt } = req.researchAdmission;
+  req.researchAdmission = null;
   try {
     const ipHash = hashClientIP(req, process.env);
     await redisCommand(
-      ['EVAL', REFUND_SCRIPT, '2', `${QUOTA_PREFIX}:ip:${ipHash}`, `${QUOTA_PREFIX}:global`],
+      ['EVAL', REFUND_SCRIPT, '2', `${QUOTA_PREFIX}:ip:${ipHash}`, `${QUOTA_PREFIX}:global`, String(resetAt)],
       process.env,
       fetch,
       console.info
@@ -183,46 +184,29 @@ async function refundFailedAdmission(req, code) {
   }
 }
 
+export function prepareResearchPayload(payload, input) {
+  const aligned = alignOfferSources(dedupeResearchPayload(payload));
+  if (!aligned.offers?.length) {
+    throw new ResearchError(422, 'NO_VERIFIED_PRICES', '판매처와 직접 연결되는 출처를 확인하지 못해 가격 결과를 표시하지 않습니다. 아래 판매처에서 직접 확인해주세요.');
+  }
+  const capacity = alignOfferCapacity(aligned, input);
+  if (capacity.optionRequired) {
+    throw new ResearchError(422, 'OPTION_REQUIRED', `서로 다른 저장용량(${capacity.variants.join(', ')})의 가격이 함께 확인되어 결과를 표시하지 않습니다. 제품명에 원하는 용량(예: 256GB)을 입력한 뒤 다시 조사해주세요.`);
+  }
+  if (!capacity.payload.offers.length) {
+    throw new ResearchError(422, 'NO_VERIFIED_PRICES', '요청한 저장용량과 정확히 일치하는 가격 출처를 확인하지 못해 결과를 표시하지 않습니다.');
+  }
+  return capacity.payload;
+}
+
 export default async function handler(req, res) {
   req.body = parseAndCanonicalizeResearchBody(req.body);
-
   if (req.method === 'POST') await migrateLegacyCache(req);
 
   const originalJson = res.json.bind(res);
-  res.json = data => {
-    const deduped = dedupeResearchPayload(data);
-
-    if (typeof deduped?.code === 'string' && REFUNDABLE_CODES.has(deduped.code)) {
-      return refundFailedAdmission(req, deduped.code).then(() => originalJson(deduped));
-    }
-
-    const aligned = alignOfferSources(deduped);
-    if (Array.isArray(deduped?.offers) && deduped.offers.length > 0 && aligned.offers.length === 0) {
-      res.status(422);
-      return refundFailedAdmission(req, 'NO_VERIFIED_PRICES').then(() => originalJson({
-        code: 'NO_VERIFIED_PRICES',
-        error: '판매처와 직접 연결되는 출처를 확인하지 못해 가격 결과를 표시하지 않습니다. 아래 판매처에서 직접 확인해주세요.'
-      }));
-    }
-
-    const capacityAligned = alignOfferCapacity(aligned, req.body);
-    if (capacityAligned.optionRequired) {
-      res.status(422);
-      return refundFailedAdmission(req, 'OPTION_REQUIRED').then(() => originalJson({
-        code: 'OPTION_REQUIRED',
-        error: `서로 다른 저장용량(${capacityAligned.variants.join(', ')})의 가격이 함께 확인되어 결과를 표시하지 않습니다. 제품명에 원하는 용량(예: 256GB)을 입력한 뒤 다시 조사해주세요.`
-      }));
-    }
-    if (aligned.offers?.length > 0 && capacityAligned.payload.offers.length === 0) {
-      res.status(422);
-      return refundFailedAdmission(req, 'NO_VERIFIED_PRICES').then(() => originalJson({
-        code: 'NO_VERIFIED_PRICES',
-        error: '요청한 저장용량과 정확히 일치하는 가격 출처를 확인하지 못해 결과를 표시하지 않습니다.'
-      }));
-    }
-
-    return originalJson(capacityAligned.payload);
+  res.json = async data => {
+    if (typeof data?.code === 'string') await refundFailedAdmission(req, data.code);
+    return originalJson(data);
   };
-
   return researchHandler(req, res);
 }

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { prepareResearchPayload } from '../api/research.js';
 import { createResearchHandler, parseGroundedPrices, normalizeInput, hashClientIP, cacheKey, ADMIT_SCRIPT, classifyProviderError, dailyLimits } from '../lib/price-research.js';
 
 const env = { GEMINI_API_KEY: 'test-key', UPSTASH_REDIS_REST_URL: 'https://redis.example', UPSTASH_REDIS_REST_TOKEN: 'test-token', IP_HASH_SECRET: 's'.repeat(32), VERCEL: '1' };
@@ -13,7 +14,7 @@ function grounded({ sources = true, supported = true, price = 120000 } = {}) {
   } }] };
 }
 function resMock() { return { headers: {}, setHeader(k,v) { this.headers[k] = v; }, status(n) { this.statusCode = n; return this; }, json(data) { this.data = data; return this; } }; }
-function harness({ admission = ['ALLOW', 4, 1900000000], provider = grounded(), providerStatus = 200, redisFails = false, overrides = {} } = {}) {
+function harness({ admission = ['ALLOW', 4, 1900000000], provider = grounded(), providerStatus = 200, redisFails = false, overrides = {}, preparePayload } = {}) {
   const calls = [], logs = [];
   const fetchImpl = async(url, options) => {
     const request = JSON.parse(options.body); calls.push({url,request});
@@ -23,7 +24,7 @@ function harness({ admission = ['ALLOW', 4, 1900000000], provider = grounded(), 
     }
     return { ok: providerStatus === 200, status: providerStatus, json: async()=>provider };
   };
-  return { calls, logs, handler: createResearchHandler({env:{...env,...overrides},fetchImpl,log:line=>logs.push(line)}) };
+  return { calls, logs, handler: createResearchHandler({env:{...env,...overrides},fetchImpl,preparePayload,log:line=>logs.push(line)}) };
 }
 async function run(h, changes = {}) {
   const res = resMock();
@@ -136,4 +137,40 @@ test('missing finish or partial JSON is rejected',()=>{
 test('Lua admission order is cache, IP, global, then counters',()=>{
   const positions=["redis.call('GET', KEYS[1])",'if ip >= ipLimit','if total >= globalLimit',"redis.call('INCR', ipkey)","redis.call('INCR', globalkey)"].map(s=>ADMIT_SCRIPT.indexOf(s));
   assert.deepEqual([...positions].sort((a,b)=>a-b),positions); assert.ok(positions.every(n=>n>=0));
+});
+
+
+test('seller validation rejects fresh prices before cache write', async () => {
+  const h = harness({ preparePayload: prepareResearchPayload });
+  const res = await run(h);
+  assert.equal(res.statusCode, 422);
+  assert.equal(res.data.code, 'NO_VERIFIED_PRICES');
+  assert.equal(h.calls.filter(call => call.request[0] === 'SET').length, 0);
+});
+
+test('only final validated payload is cached and returned', async () => {
+  const h = harness({ preparePayload: payload => ({ ...payload, offers: payload.offers.map(offer => ({ ...offer, note: 'validated' })) }) });
+  const res = await run(h);
+  assert.equal(res.statusCode, 200);
+  const write = h.calls.find(call => call.request[0] === 'SET');
+  assert.equal(JSON.parse(write.request[2]).offers[0].note, 'validated');
+  assert.deepEqual(JSON.parse(write.request[2]).offers, res.data.offers);
+});
+
+test('cached validation failure does not mark an uncharged request for refund', async () => {
+  const payload = { ...parseGroundedPrices(grounded()), expiresAt: new Date(Date.now() + 60000).toISOString() };
+  const h = harness({ admission: ['CACHE', JSON.stringify(payload)], preparePayload: prepareResearchPayload });
+  const req = { method: 'POST', body, headers: { 'x-vercel-forwarded-for': '203.0.113.42' } };
+  const res = resMock();
+  await h.handler(req, res);
+  assert.equal(res.statusCode, 422);
+  assert.equal(req.researchAdmission, null);
+  assert.equal(h.calls.length, 1);
+});
+
+test('charged failures retain their original admission reset for refund', async () => {
+  const h = harness({ providerStatus: 503 });
+  const req = { method: 'POST', body, headers: { 'x-vercel-forwarded-for': '203.0.113.42' } };
+  await h.handler(req, resMock());
+  assert.deepEqual(req.researchAdmission, { resetAt: 1900000000 });
 });

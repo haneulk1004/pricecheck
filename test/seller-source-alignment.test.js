@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { alignOfferSources } from '../api/research.js';
+import { alignOfferSources, prepareResearchPayload } from '../api/research.js';
 
 const source = (url, title = '') => ({ url, title });
 const grounding = title => source('https://vertexaisearch.cloud.google.com/grounding-api-redirect/example', title);
@@ -55,4 +55,14 @@ test('Frisbee grounding redirect is recognized', () => {
   const result = alignOfferSources({ offers: [{ seller: '프리스비', sources: [grounding('frisbeekorea.com')] }] });
   assert.equal(result.offers.length, 1);
   assert.equal(result.offers[0].sources.length, 1);
+});
+
+
+test('capacity validation rejects mixed or wrong variants before caching', () => {
+  const offer = capacity => ({ seller: '컴퓨존', productName: `제품 ${capacity}`, sources: [source('https://compuzone.co.kr/item/1')] });
+  assert.throws(() => prepareResearchPayload({ offers: [offer('256GB'), offer('512GB')] }, { productName: '제품' }), error => error.code === 'OPTION_REQUIRED');
+  assert.throws(() => prepareResearchPayload({ offers: [offer('256GB')] }, { productName: '제품 512GB' }), error => error.code === 'NO_VERIFIED_PRICES');
+  const result = prepareResearchPayload({ offers: [offer('256GB'), offer('512GB')] }, { productName: '제품 512GB' });
+  assert.equal(result.offers.length, 1);
+  assert.equal(result.offers[0].productName, '제품 512GB');
 });
