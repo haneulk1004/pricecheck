@@ -159,9 +159,18 @@ function variantTokens(value='') {
   return [...String(value).normalize('NFKC').matchAll(/\b\d+(?:[.,]\d+)?\s*(?:ML|L|MG|G|KG|GB|TB|MM|CM|INCH|인치|개|입)\b/giu)].map(match => normalizedLabel(match[0]));
 }
 
-function imageTitleScore(title, query) {
+function packCounts(value = '') {
+  const text = String(value).normalize('NFKC');
+  return [...text.matchAll(/(?:[x×*]\s*(\d+)|(?:^|[^\d.])(\d+)\s*(?:개|입|캔|팩|병|packs?\b|pcs?\b|ea\b))/giu)]
+    .map(match => Number(match[1] || match[2]));
+}
+
+export function imageTitleScore(title, query) {
   const visible = stripHtml(title);
   const normalizedTitle = normalizedLabel(visible);
+  const requestedCounts = packCounts(query);
+  const resultCounts = packCounts(visible);
+  if (resultCounts.some(count => !requestedCounts.includes(count) && count > 1)) return -1;
   const variants = variantTokens(query);
   if (variants.some(token => !normalizedTitle.includes(token))) return -1;
   const words = clean(query,220).split(/\s+/u)
@@ -214,7 +223,7 @@ async function googleImageSearchProduct({productName,brand,query,apiKey}, fetchI
     [
       'Use Google Image Search to find visual evidence for this exact retail product.',
       'Only use images whose result title matches the same product and every explicit model, capacity, volume, size, pack count, edition or other price-defining variant in the query.',
-      'Reject accessories, logos, screenshots, articles and different variants.',
+      'Reject accessories, logos, screenshots, articles and different variants. If the query has no pack count, find a SINGLE-UNIT image and reject multipacks, cartons, bundles and images with pack-count badges.',
       'Reply only: exact product image found.',
       `Product query: ${JSON.stringify(exactQuery)}`
     ].join(' '),
@@ -222,7 +231,7 @@ async function googleImageSearchProduct({productName,brand,query,apiKey}, fetchI
       'Search Google Images again for an exact product-detail image of this Korean retail item.',
       'Prioritize Korean retailer, manufacturer, or price-comparison product pages.',
       'The image result title must identify the same product and include every explicit capacity, volume, size, pack count, model, edition or SKU variant from the query.',
-      'Do not use a similar product, different volume, logo, article, accessory, screenshot, or generic category image.',
+      'Do not use a similar product, different volume, logo, article, accessory, screenshot, or generic category image. Unless explicitly requested, reject multipacks (such as 24 cans) and pack-count badges; prefer a single-unit image.',
       `Exact query: ${JSON.stringify(exactQuery)}`
     ].join(' ')
   ];
@@ -291,7 +300,7 @@ You are the product-identification engine for PRICE_CHECK, a Korean shopping pri
 The user entered a manual product query. Normalize it into structured product data.
 Use only information strongly implied by the query. Do not invent a brand or model code.
 If the query is itself a model/style/SKU code and you can confidently identify the commercial product from your knowledge, return the likely brand/product/model. Otherwise preserve the query as productName and leave uncertain fields empty.
-Prefer the product's canonical English commercial name in productName when it is well known, because PRICE_CHECK uses exact public metadata matching for the preview image.
+Keep Korean retail product names in Korean when the query is Korean. Do not translate domestic food, drink, beauty, household or book names into English. Preserve explicitly entered commercial names and model codes.
 Preserve price-defining variants explicitly written by the user, including storage/capacity, volume, pack count, size, edition, generation, color when it changes the SKU, and model suffix. Never drop an explicit variant from productName or searchQuery.
 Return JSON ONLY in this exact shape:
 {
@@ -327,9 +336,11 @@ Manual query: ${JSON.stringify(query)}
       const rawText = data?.output_text || outputBlocks(data)[0]?.text;
       if (!rawText) throw new Error('empty');
       const parsed = extractJson(rawText);
-      const productName = clean(parsed.productName,160) || query;
       const brand = clean(parsed.brand,80);
-      const searchQuery = clean(parsed.searchQuery,200) || query;
+      const translated = /[가-힣]/u.test(query) && !/[가-힣]/u.test(clean(parsed.productName));
+      const originalName = brand && query.startsWith(brand + ' ') ? query.slice(brand.length).trim() : query;
+      const productName = translated ? originalName : clean(parsed.productName,160) || query;
+      const searchQuery = translated ? query : clean(parsed.searchQuery,200) || query;
       const image = await resolveProductImage(productName,boundedFetch,{brand,query,apiKey});
       const result = {
         brand,

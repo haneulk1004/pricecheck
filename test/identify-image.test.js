@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readableGroundedImage, resolveProductImage, createIdentifyHandler } from '../api/identify.js';
+import { readableGroundedImage, resolveProductImage, createIdentifyHandler, imageTitleScore } from '../api/identify.js';
 const uri = 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/example';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9V8AAAAASUVORK5CYII=', 'base64');
 const imageResponse = () => new Response(png, {headers:{'content-type':'image/png'}});
@@ -53,4 +53,23 @@ test('image failure preserves identified product and never fabricates a preview'
   assert.equal(res.code, 200);
   assert.equal(res.data.productName, '갈아만든 배 340ml');
   assert.equal(res.data.imageUrl, '');
+});
+
+
+test('single-unit preview rejects unrequested multipacks', () => {
+  for (const title of ['해태 갈아만든 배 340ml 24캔', '해태 갈아만든 배 340ml x24', '해태 갈아만든 배 340ml 24개입', '해태 갈아만든 배 340ml 6팩']) {
+    assert.equal(imageTitleScore(title, '해태 갈아만든 배 340ml'), -1);
+  }
+  assert.ok(imageTitleScore('해태 갈아만든 배 340ml 1캔', '해태 갈아만든 배 340ml') >= 0);
+  assert.ok(imageTitleScore('해태 갈아만든 배 340ml 24캔', '해태 갈아만든 배 340ml 24캔') >= 0);
+});
+
+test('Korean manual query is not silently replaced with an English translation', async () => {
+  const fetchImpl = async url => url.includes('/interactions')
+    ? Response.json({output_text:JSON.stringify({brand:'해태',productName:'Haitai Crushed Pear 340ml',searchQuery:'Haitai Crushed Pear 340ml',confidence:95})})
+    : new Response('{}', {status:502});
+  const res = {setHeader(){},status(code){this.code=code;return this;},json(data){this.data=data;return this;}};
+  await createIdentifyHandler({env:{GEMINI_API_KEY:'test'},fetchImpl,log(){}})({method:'POST',body:{query:'해태 갈아만든 배 340ml'}},res);
+  assert.equal(res.data.productName, '갈아만든 배 340ml');
+  assert.equal(res.data.searchQuery, '해태 갈아만든 배 340ml');
 });
