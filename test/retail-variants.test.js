@@ -25,3 +25,13 @@ test('reviewed contradictory pack disclosure excludes only the affected product 
  assert.equal(hasReviewedSourceConflict({productName:'해태 갈아만든 배 238ml',sources:[source]}),false);
  assert.equal(hasReviewedSourceConflict({productName:'해태 갈아만든 배 340ml',sources:[{...source,title:'danawa.com'}]}),false);
 });
+
+import { REVIEWED_NON_PRODUCT_CITATIONS } from '../lib/reviewed-source-conflicts.js';
+import { prepareResearchPayload } from '../api/research.js';
+test('reviewed category redirect is excluded from cached and fresh preparation without blocking other LotteON links',()=>{
+ const bad={seller:'롯데ON',productName:'해태 롯데마트 갈아만든 배 340ml',priceKRW:920,sources:[{url:[...REVIEWED_NON_PRODUCT_CITATIONS][0],title:'lotteon.com'}]};
+ const good={seller:'다나와',productName:'해태htb 갈아만든배 340ml 캔 1개',priceKRW:600,sources:[{url:'https://prod.danawa.com/info/?pcode=7662673',title:'danawa.com'}]};
+ assert.deepEqual(prepareResearchPayload({offers:[bad,good]},input).offers,[good]);
+ assert.throws(()=>prepareResearchPayload({offers:[bad]},input),e=>e.code==='NO_VERIFIED_PRICES');
+ assert.equal(hasReviewedSourceConflict({...bad,sources:[{url:'https://www.lotteon.com/p/product/TEST',title:'lotteon.com'}]}),false);
+});
