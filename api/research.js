@@ -1,6 +1,7 @@
 import { createResearchHandler, cacheKey, hashClientIP, normalizeInput, redisCommand, ResearchError } from '../lib/price-research.js';
 import { createPromptAwareFetch } from '../lib/resell-grounding.js';
 import { parseAndCanonicalizeResearchBody } from '../lib/research-request.js';
+import { hasReviewedSourceConflict } from '../lib/reviewed-source-conflicts.js';
 import { matchesRetailVariants } from '../lib/retail-variants.js';
 import { dedupeResearchPayload } from '../lib/source-dedupe.js';
 
@@ -197,7 +198,7 @@ export function prepareResearchPayload(payload, input) {
   if (!capacity.payload.offers.length) {
     throw new ResearchError(422, 'NO_VERIFIED_PRICES', '요청한 저장용량과 정확히 일치하는 가격 출처를 확인하지 못해 결과를 표시하지 않습니다.');
   }
-  const offers = capacity.payload.offers.filter(offer => matchesRetailVariants(offer, input));
+  const offers = capacity.payload.offers.filter(offer => matchesRetailVariants(offer, input) && (input.mode !== 'store' || !hasReviewedSourceConflict(offer)));
   if (!offers.length) {
     throw new ResearchError(422, 'NO_VERIFIED_PRICES', '요청한 용량·수량과 일치하는 가격 출처를 확인하지 못했습니다. 다른 용량이나 묶음 상품 가격은 표시하지 않습니다.');
   }

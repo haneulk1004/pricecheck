@@ -17,3 +17,11 @@ test('unrelated electronic product and resell formats retain their existing vali
  assert.equal(matchesRetailVariants({productName:'MX Keys Mini',note:'새 상품'},{productName:'MX Keys Mini',modelCode:'KX700',mode:'store'}),true);
  assert.equal(matchesRetailVariants({productName:'Air Force 1'},{productName:'Air Force 1',mode:'resell',size:'260'}),true);
 });
+
+import { hasReviewedSourceConflict } from '../lib/reviewed-source-conflicts.js';
+test('reviewed contradictory pack disclosure excludes only the affected product source',()=>{
+ const source={url:'https://vertexaisearch.cloud.google.com/grounding-api-redirect/example',title:'lottemartzetta.com'};
+ assert.equal(hasReviewedSourceConflict({productName:'해태 갈아만든 배 340ml',sources:[source]}),true);
+ assert.equal(hasReviewedSourceConflict({productName:'해태 갈아만든 배 238ml',sources:[source]}),false);
+ assert.equal(hasReviewedSourceConflict({productName:'해태 갈아만든 배 340ml',sources:[{...source,title:'danawa.com'}]}),false);
+});

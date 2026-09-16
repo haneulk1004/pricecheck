@@ -52,6 +52,7 @@ test('Preview/Production limits can be configured without code changes', async()
   const h = harness({overrides:{PER_IP_DAILY_LIMIT:'10',GLOBAL_DAILY_LIMIT:'400'}}); const res = await run(h);
   assert.equal(res.statusCode,200);
   assert.deepEqual(h.calls[0].request.slice(-2),['10','400']);
+  assert.deepEqual(res.data.limits,{ipDaily:10,globalDaily:400});
   assert.deepEqual(dailyLimits({...env,PER_IP_DAILY_LIMIT:'10',GLOBAL_DAILY_LIMIT:'400'}),{ipLimit:10,globalLimit:400});
 });
 
