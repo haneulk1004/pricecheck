@@ -1,6 +1,7 @@
 import { createResearchHandler, cacheKey, hashClientIP, normalizeInput, redisCommand, ResearchError } from '../lib/price-research.js';
 import { createPromptAwareFetch } from '../lib/resell-grounding.js';
 import { parseAndCanonicalizeResearchBody } from '../lib/research-request.js';
+import { isEligibleRetailSource } from '../lib/retail-source-policy.js';
 import { hasReviewedSourceConflict } from '../lib/reviewed-source-conflicts.js';
 import { matchesRetailVariants } from '../lib/retail-variants.js';
 import { dedupeResearchPayload } from '../lib/source-dedupe.js';
@@ -187,7 +188,13 @@ async function refundFailedAdmission(req, code) {
 }
 
 export function prepareResearchPayload(payload, input) {
-  const aligned = alignOfferSources(dedupeResearchPayload(payload));
+  let aligned = alignOfferSources(dedupeResearchPayload(payload));
+  if (input.mode === 'store') {
+    aligned = { ...aligned, offers: aligned.offers.flatMap(offer => {
+      const sources = offer.sources.filter(isEligibleRetailSource);
+      return sources.length ? [{ ...offer, sources }] : [];
+    }) };
+  }
   if (!aligned.offers?.length) {
     throw new ResearchError(422, 'NO_VERIFIED_PRICES', '판매처와 직접 연결되는 출처를 확인하지 못해 가격 결과를 표시하지 않습니다. 아래 판매처에서 직접 확인해주세요.');
   }
