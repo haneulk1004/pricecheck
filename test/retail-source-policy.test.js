@@ -19,3 +19,12 @@ test('fresh and cached Laneige result cannot retain the reported publisher-only 
  const good={...bad,seller:'다나와',sources:[redirect('danawa.com')]};
  assert.deepEqual(prepareResearchPayload({offers:[bad,good]},input).offers,[good]);
 });
+
+test('SSG promotion evidence is rejected in both redirects and direct links',()=>{
+ for(const title of ['ssg.com','event.ssg.com','https://www.ssg.com/']) assert.equal(isEligibleRetailSource(redirect(title)),false);
+ for(const url of ['https://event.ssg.com/eventDetail.ssg?eventId=123','https://www.ssg.com/event/eventDetail.ssg','https://shop.example/promotion/beauty','https://event.example.com/beauty']) assert.equal(isEligibleRetailSource({url}),false);
+ assert.equal(isEligibleRetailSource({url:'https://www.ssg.com/item/itemView.ssg?itemId=123456'}),true);
+ assert.equal(isEligibleRetailSource({url:'https://www.ssg.com/item/itemView.ssg'}),false);
+ const offer={seller:'SSG.COM',productName:'레저렉션 아로마틱 핸드 밤 75mL',priceKRW:37050,sources:[redirect('ssg.com')]};
+ assert.throws(()=>prepareResearchPayload({offers:[offer]},{mode:'store',productName:'레저렉션 아로마틱 핸드 밤 75mL'}),e=>e.code==='NO_VERIFIED_PRICES');
+});
