@@ -14,7 +14,7 @@ function grounded({ sources = true, supported = true, price = 120000 } = {}) {
   } }] };
 }
 function resMock() { return { headers: {}, setHeader(k,v) { this.headers[k] = v; }, status(n) { this.statusCode = n; return this; }, json(data) { this.data = data; return this; } }; }
-function harness({ admission = ['ALLOW', 4, 1900000000], provider = grounded(), providerStatus = 200, redisFails = false, overrides = {}, preparePayload } = {}) {
+function harness({ admission = ['ALLOW', 4, 1900000000], provider = grounded(), providerStatus = 200, redisFails = false, overrides = {}, preparePayload, providerError } = {}) {
   const calls = [], logs = [];
   const fetchImpl = async(url, options) => {
     const request = JSON.parse(options.body); calls.push({url,request});
@@ -22,6 +22,7 @@ function harness({ admission = ['ALLOW', 4, 1900000000], provider = grounded(), 
       if (redisFails) throw new Error('error containing sensitive data');
       return { ok: true, json: async()=>({ result: request[0] === 'EVAL' ? admission : 'OK' }) };
     }
+    if (providerError) throw providerError;
     return { ok: providerStatus === 200, status: providerStatus, json: async()=>provider };
   };
   return { calls, logs, handler: createResearchHandler({env:{...env,...overrides},fetchImpl,preparePayload,log:line=>logs.push(line)}) };
@@ -174,4 +175,12 @@ test('charged failures retain their original admission reset for refund', async 
   const req = { method: 'POST', body, headers: { 'x-vercel-forwarded-for': '203.0.113.42' } };
   await h.handler(req, resMock());
   assert.deepEqual(req.researchAdmission, { resetAt: 1900000000 });
+});
+
+test('provider timeout has a specific retryable message and does not cache a result',async()=>{
+ const error=new Error('private provider detail');error.name='TimeoutError';
+ const h=harness({providerError:error});const res=await run(h);
+ assert.equal(res.statusCode,503);assert.equal(res.data.code,'RESEARCH_TIMEOUT');
+ assert.match(res.data.error,/검색 응답이 늦어/);
+ assert.ok(!res.data.error.includes('private'));assert.equal(h.calls.length,2);
 });

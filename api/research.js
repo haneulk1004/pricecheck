@@ -8,7 +8,7 @@ import { dedupeResearchPayload } from '../lib/source-dedupe.js';
 const researchHandler = createResearchHandler({ fetchImpl: createPromptAwareFetch(), preparePayload: prepareResearchPayload });
 const QUOTA_PREFIX = 'pricecheck:{grounding}:v1';
 const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v5';
-const REFUNDABLE_CODES = new Set(['PROVIDER_ERROR','INVALID_RESPONSE','NO_SOURCES','NO_VERIFIED_PRICES','OPTION_REQUIRED','RESEARCH_FAILED']);
+const REFUNDABLE_CODES = new Set(['PROVIDER_ERROR','INVALID_RESPONSE','NO_SOURCES','NO_VERIFIED_PRICES','OPTION_REQUIRED','RESEARCH_FAILED','RESEARCH_TIMEOUT']);
 
 export const REFUND_SCRIPT = `
 local day = math.floor((tonumber(ARGV[1]) + 32400) / 86400) - 1
