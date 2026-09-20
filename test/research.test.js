@@ -14,13 +14,13 @@ function grounded({ sources = true, supported = true, price = 120000 } = {}) {
   } }] };
 }
 function resMock() { return { headers: {}, setHeader(k,v) { this.headers[k] = v; }, status(n) { this.statusCode = n; return this; }, json(data) { this.data = data; return this; } }; }
-function harness({ admission = ['ALLOW', 4, 1900000000], provider = grounded(), providerStatus = 200, redisFails = false, overrides = {}, preparePayload, providerError } = {}) {
+function harness({ admission = ['ALLOW', 4, 1900000000], provider = grounded(), providerStatus = 200, redisFails = false, overrides = {}, preparePayload, providerError, admissionSequence } = {}) {
   const calls = [], logs = [];
   const fetchImpl = async(url, options) => {
     const request = JSON.parse(options.body); calls.push({url,request});
     if (url === env.UPSTASH_REDIS_REST_URL) {
       if (redisFails) throw new Error('error containing sensitive data');
-      return { ok: true, json: async()=>({ result: request[0] === 'EVAL' ? admission : 'OK' }) };
+      return { ok: true, json: async()=>({ result: request[0] === 'EVAL' ? (request[1] === ADMIT_SCRIPT ? (admissionSequence?.shift() ?? admission) : 1) : 'OK' }) };
     }
     if (providerError) throw providerError;
     return { ok: providerStatus === 200, status: providerStatus, json: async()=>provider };
@@ -161,13 +161,13 @@ test('only final validated payload is cached and returned', async () => {
 
 test('cached validation failure does not mark an uncharged request for refund', async () => {
   const payload = { ...parseGroundedPrices(grounded()), expiresAt: new Date(Date.now() + 60000).toISOString() };
-  const h = harness({ admission: ['CACHE', JSON.stringify(payload)], preparePayload: prepareResearchPayload });
+  const h = harness({ admissionSequence: [['CACHE', JSON.stringify(payload)], ['IP_LIMIT', 100]], preparePayload: prepareResearchPayload });
   const req = { method: 'POST', body, headers: { 'x-vercel-forwarded-for': '203.0.113.42' } };
   const res = resMock();
   await h.handler(req, res);
-  assert.equal(res.statusCode, 422);
+  assert.equal(res.statusCode, 429);
   assert.equal(req.researchAdmission, null);
-  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls.length, 3);
 });
 
 test('charged failures retain their original admission reset for refund', async () => {
@@ -183,4 +183,14 @@ test('provider timeout has a specific retryable message and does not cache a res
  assert.equal(res.statusCode,503);assert.equal(res.data.code,'RESEARCH_TIMEOUT');
  assert.match(res.data.error,/검색 응답이 늦어/);
  assert.ok(!res.data.error.includes('private'));assert.equal(h.calls.length,2);
+});
+
+test('expired cache is removed and one fresh request is admitted through normal limits',async()=>{
+ const expired={...parseGroundedPrices(grounded()),expiresAt:'2020-01-01T00:00:00Z'};
+ const h=harness({admissionSequence:[['CACHE',JSON.stringify(expired)],['ALLOW',3,1900000000]]});
+ const res=await run(h);
+ assert.equal(res.statusCode,200);assert.equal(res.data.cached,false);assert.equal(res.data.remaining,3);
+ assert.equal(h.calls.filter(c=>c.request[1]===ADMIT_SCRIPT).length,2);
+ assert.equal(h.calls.filter(c=>c.url!==env.UPSTASH_REDIS_REST_URL).length,1);
+ assert.ok(h.calls[1].request[1].includes("redis.call('GET'"));
 });

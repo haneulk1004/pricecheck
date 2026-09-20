@@ -349,7 +349,7 @@ function PriceResearch({product,mode,size,storePrice}){
   };
   return <section className="border border-zinc-700 bg-zinc-950 rounded-2xl p-6 mb-8" aria-label="실시간 가격 조사">
     <div className="flex flex-col sm:flex-row gap-5 sm:items-center sm:justify-between">
-      <div><h3 className="text-xl font-black">출처로 확인하는 가격</h3><p className="text-xs text-zinc-400 mt-2 leading-6">Google 검색으로 공개된 판매가를 조사합니다.<br/>{result?.limits ? `새 조사: IP당 하루 ${result.limits.ipDaily}회 · 전체 하루 ${result.limits.globalDaily}회` : '새 조사에는 IP별·전체 일일 한도가 적용됩니다.'} · 한국시간 자정 초기화<br/>같은 제품·모드·사이즈의 결과는 24시간 재사용하며 횟수를 차감하지 않습니다.</p></div>
+      <div><h3 className="text-xl font-black">상품 페이지에서 확인한 가격</h3><p className="text-xs text-zinc-400 mt-2 leading-6">Google 검색으로 공개된 판매가를 조사합니다.<br/>{result?.limits ? `새 조사: IP당 하루 ${result.limits.ipDaily}회 · 전체 하루 ${result.limits.globalDaily}회` : '새 조사에는 IP별·전체 일일 한도가 적용됩니다.'} · 한국시간 자정 초기화<br/>같은 제품·모드·사이즈의 결과는 24시간 재사용하며 횟수를 차감하지 않습니다.</p></div>
       <button onClick={research} disabled={busy} className="bg-white text-black font-black rounded-xl px-6 py-4 disabled:opacity-50 disabled:cursor-wait whitespace-nowrap">{busy?'가격 조사 중…':'실시간 가격 조사'}</button>
     </div>
     <div aria-live="polite" aria-busy={busy}>
@@ -364,7 +364,7 @@ function PriceResearch({product,mode,size,storePrice}){
           <p className="text-xs text-zinc-400 leading-6">{offer.condition} · {offer.note}</p>
           <ul className="mt-4 space-y-2">{offer.sources.map((source,i)=><li key={i}><a href={source.url} target="_blank" rel="noopener noreferrer" className="text-sm underline underline-offset-4 break-all">출처 {i+1}: {source.title} ↗</a></li>)}</ul>
         </article>)}</div>
-        <p className="text-xs text-zinc-500 mt-4 leading-6">검색에서 확인된 공개 가격입니다. 옵션·배송비·재고·거래 조건에 따라 달라질 수 있으므로 출처에서 최종 확인해주세요.</p>
+        <p className="text-xs text-zinc-500 mt-4 leading-6">판매처 상품 데이터와 제품·옵션·표시 가격을 대조한 결과입니다. 쿠폰·배송비·최종 결제 금액은 판매처에서 다시 확인해주세요.</p>
         {result.searchSuggestionsHtml && <iframe title="Google 검색 제안" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" srcDoc={result.searchSuggestionsHtml} className="w-full mt-4 border-0 rounded-lg bg-white" style={{height:180}} />}
       </div>}
     </div>

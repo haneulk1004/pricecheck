@@ -1,12 +1,18 @@
 import { createResearchHandler, cacheKey, hashClientIP, normalizeInput, redisCommand, ResearchError } from '../lib/price-research.js';
 import { createPromptAwareFetch } from '../lib/resell-grounding.js';
 import { parseAndCanonicalizeResearchBody } from '../lib/research-request.js';
+import { validateListingEvidence } from '../lib/listing-evidence.js';
+import { matchesProductIdentity } from '../lib/product-identity.js';
 import { isEligibleRetailSource } from '../lib/retail-source-policy.js';
 import { hasReviewedSourceConflict } from '../lib/reviewed-source-conflicts.js';
 import { matchesRetailVariants } from '../lib/retail-variants.js';
 import { dedupeResearchPayload } from '../lib/source-dedupe.js';
 
-const researchHandler = createResearchHandler({ fetchImpl: createPromptAwareFetch(), preparePayload: prepareResearchPayload });
+const researchHandler = createResearchHandler({ fetchImpl: createPromptAwareFetch(), preparePayload: async (payload,input) => {
+  const result = await validateListingEvidence(prepareResearchPayload(payload,input),input);
+  if (!result.offers.length) throw new ResearchError(422,'NO_VERIFIED_PRICES','판매처 상품 상세에서 같은 제품·옵션·가격을 확인하지 못했습니다. 아래 판매처 검색에서 직접 확인해주세요.');
+  return result;
+} });
 const QUOTA_PREFIX = 'pricecheck:{grounding}:v1';
 const CACHE_MIGRATION_PREFIX = 'pricecheck:{grounding}:source-align:v5';
 const REFUNDABLE_CODES = new Set(['PROVIDER_ERROR','INVALID_RESPONSE','NO_SOURCES','NO_VERIFIED_PRICES','OPTION_REQUIRED','RESEARCH_FAILED','RESEARCH_TIMEOUT']);
@@ -205,9 +211,9 @@ export function prepareResearchPayload(payload, input) {
   if (!capacity.payload.offers.length) {
     throw new ResearchError(422, 'NO_VERIFIED_PRICES', '요청한 저장용량과 정확히 일치하는 가격 출처를 확인하지 못해 결과를 표시하지 않습니다.');
   }
-  const offers = capacity.payload.offers.filter(offer => matchesRetailVariants(offer, input) && (input.mode !== 'store' || !hasReviewedSourceConflict(offer)));
+  const offers = capacity.payload.offers.filter(offer => matchesRetailVariants(offer, input) && matchesProductIdentity(offer, input) && (input.mode !== 'store' || !hasReviewedSourceConflict(offer)));
   if (!offers.length) {
-    throw new ResearchError(422, 'NO_VERIFIED_PRICES', '요청한 용량·수량과 일치하는 가격 출처를 확인하지 못했습니다. 다른 용량이나 묶음 상품 가격은 표시하지 않습니다.');
+    throw new ResearchError(422, 'NO_VERIFIED_PRICES', '요청한 브랜드·제품·옵션과 일치하는 가격 근거를 확인하지 못했습니다. 다른 제품이나 옵션의 가격은 표시하지 않습니다.');
   }
   return { ...capacity.payload, offers };
 }
