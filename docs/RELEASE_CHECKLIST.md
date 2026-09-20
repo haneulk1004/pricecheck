@@ -94,7 +94,7 @@ Preview: https://pricecheck-git-v100-ai-championship-haneulk1004s-projects.verce
 - 7d039d9 Preview 배포 READY. 독립된 상품 구조화 데이터 대조 적용.
 - 자동 테스트 87개 통과. 실제 가격 정확성 전체 통과를 의미하지 않음.
 - 실제 신규 가격 조회 22.3초 뒤 NO_VERIFIED_PRICES(422). 검증된 가격 성공 사례는 새 배포에서 아직 없음.
-- 비로그인 작업 URL은 Vercel 로그인으로 이동. 프로젝트 SSO 보호 all_except_custom_domains 활성. 제출 URL 미확정.
+- 2026-09-20 사용자가 Vercel Authentication을 해제하고 저장. 비로그인 요청에서 작업 URL HTTP 200, PRICE_CHECK 화면, 로그인 리디렉션 없음 확인.
 - 브라우저 홈 표시 및 직접검색/사진촬영/업로드 진입 버튼 확인.
-- 공개 설정 변경은 현재 연결 도구에서 지원하지 않으며 브라우저 Vercel 로그인도 필요.
-- 제출 전 공개 접속, 성공적인 가격/출처 원문 대조, 대표 이미지/스크린샷 및 최종 제출 확인이 남음.
+- 공개 제출 URL: https://pricecheck-git-v100-ai-championship-haneulk1004s-projects.vercel.app/
+- 16:9 제출 이미지 2장(홈, 제품 식별 결과) 생성. 최종 제출 확인과 심사 기간 운영이 남음.
