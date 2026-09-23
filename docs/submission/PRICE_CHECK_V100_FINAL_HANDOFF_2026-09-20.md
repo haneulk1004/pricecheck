@@ -132,8 +132,8 @@ https://pricecheck-git-v100-ai-championship-haneulk1004s-projects.vercel.app/
 - 소스 코드, 최신 README, 제출 문서, 제출용 이미지 5장: GitHub `v100-ai-championship` 브랜치에 보관
 - 최신 README: GitHub `main` 브랜치에도 동기화
 - 최종 인수인계 문서와 제출용 이미지: 지속 보관본으로 별도 저장
-- 제출 완료 확인 화면: 지속 보관본 `wanted-submission-confirmed-2026-09-20.png`
-- GitHub 기본 브랜치 변경 확인 화면: 지속 보관본 `github-default-branch-confirmed-2026-09-20.png`
+- 제출 완료 확인 화면: 2026-09-20 첨부 이미지로 지속 보관
+- GitHub 기본 브랜치 변경 확인 화면: 2026-09-20 첨부 이미지로 지속 보관
 - GitHub 저장소 공개 상태 및 관리자 권한 확인
 
 심사 기간 유지 사항:
