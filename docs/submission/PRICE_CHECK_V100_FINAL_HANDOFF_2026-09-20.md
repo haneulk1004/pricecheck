@@ -1,15 +1,21 @@
 # PRICE_CHECK V100 — 최종 인수인계 및 제출 기록
 
-작성일: 2026-09-20  
+최초 작성일: 2026-09-20
+최종 갱신일: 2026-09-23
 프로젝트: Wanted AI Championship 2026 제출용 PRICE_CHECK V100
+최종 상태: 제출 완료
 
 ## 1. 접속 및 소스
 
 - 공개 서비스: https://pricecheck-git-v100-ai-championship-haneulk1004s-projects.vercel.app/
 - GitHub: https://github.com/haneulk1004/pricecheck
-- 배포 브랜치: `v100-ai-championship`
-- 기준 커밋: `c31c081011414d13c460d0071ce68eff6d5bc172`
+- 배포 및 기본 브랜치: `v100-ai-championship`
+- 최종 README 커밋: `a76ea90f4b2c8a6dd397140b208c48275966a53d`
+- 제출 자료 보관 커밋: `7e27270b47908c4a79d06e05f4153797f5a9b641`
+- `main` 브랜치 README 동기화 커밋: `c9f9c8a7e5cfe4fe9acc80375c92f75e34110505`
 - Vercel Deployment Protection 해제 및 비로그인 공개 접속 확인 완료
+- GitHub 기본 브랜치를 `v100-ai-championship`로 변경 완료
+- GitHub About 설명과 공개 서비스 Website 주소 등록 완료
 
 ## 2. 서비스 개요
 
@@ -108,18 +114,36 @@ https://pricecheck-git-v100-ai-championship-haneulk1004s-projects.vercel.app/
 
 모든 제출 이미지는 1280×720, 16:9로 확인했습니다. 대표 이미지는 홈 화면을 사용합니다.
 
-## 9. 제출 직전 체크리스트
+## 9. 최종 제출 결과
 
-- 제목, 문제 설명, AI 활용 설명 입력 확인
-- React, Gemini, ChatGPT, Vercel 선택 확인
-- 서비스 링크가 위 공개 Vercel 주소인지 확인
-- 대표 이미지와 스크린샷 5장 등록 확인
-- API 키·토큰·비밀번호 노출 여부 확인
-- 임시저장 후 입력값과 이미지 유지 여부 확인
-- `과제 제출하기` 실행
-- 제출 완료 화면 캡처 보관
+- 제출일: 2026-09-20
+- 원티드 `내 과제` 화면에서 등록 완료 확인
+- 제출 제목: `PRICE_CHECK V100 — 사진으로 찾고 출처로 검증하는 AI 가격 확인 서비스`
+- 제목, 문제 설명, AI 활용 설명 입력 완료
+- React, Gemini, ChatGPT, Vercel 선택 완료
+- 공개 Vercel 서비스 링크 등록 완료
+- 대표 이미지와 16:9 스크린샷 5장 등록 완료
+- API 키·토큰·비밀번호 비노출 확인
+- `과제 제출하기` 실행 및 제출 완료 화면 확인
+- 마감 후에는 제출 내용을 수정할 수 없으므로 현재 배포와 저장소를 심사 기간 동안 유지
 
-## 10. 제출 후 우선 개선 순서
+## 10. 저장 및 보관 현황
+
+- 소스 코드, 최신 README, 제출 문서, 제출용 이미지 5장: GitHub `v100-ai-championship` 브랜치에 보관
+- 최신 README: GitHub `main` 브랜치에도 동기화
+- 최종 인수인계 문서와 제출용 이미지: 지속 보관본으로 별도 저장
+- 제출 완료 확인 화면: 지속 보관본 `wanted-submission-confirmed-2026-09-20.png`
+- GitHub 기본 브랜치 변경 확인 화면: 지속 보관본 `github-default-branch-confirmed-2026-09-20.png`
+- GitHub 저장소 공개 상태 및 관리자 권한 확인
+
+심사 기간 유지 사항:
+
+1. Vercel 프로젝트와 현재 배포를 삭제하지 않기
+2. 환경변수와 API 키를 불필요하게 변경하지 않기
+3. GitHub 기본 브랜치를 변경하지 않기
+4. 치명적인 오류가 아니면 심사 중 코드 수정이나 재배포를 피하기
+
+## 11. 제출 후 우선 개선 순서
 
 1. 공식 쇼핑 검색 API 또는 판매처별 정식 API 연동
 2. 상품 일치 점수와 결과 제외 사유를 사용자에게 명확히 표시
@@ -127,4 +151,3 @@ https://pricecheck-git-v100-ai-championship-haneulk1004s-projects.vercel.app/
 4. 외부 검색 지연 시 재시도·상태 표시 개선
 5. 판매처 상품 상세 페이지 직접 연결 비율 향상
 6. 사용자 피드백 기반의 검색 정확도 측정 및 회귀 테스트 확대
-
